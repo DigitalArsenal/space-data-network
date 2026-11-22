@@ -191,7 +191,15 @@ func TestPublicationPublicationsOnlyRealDaemons(t *testing.T) {
 		t.Fatalf("after the restart the publication took %s to import, want under a minute", took)
 	}
 	t.Logf("after the restart: still publications only; publication of batch o5 imported %s after it was published", took.Round(time.Millisecond))
-	requireNoFollowerReads(t, a, 0, "only", "after the restart")
+	// The command repeated without --publications changes nothing and asks
+	// the producer nothing: it is refused before the plan's statement read.
+	if out, err = b.cli(t, lane...); err == nil || !strings.Contains(out+err.Error(), "is subscribed publications only: nothing is changed and the producer is not asked") {
+		t.Fatalf("sync subscribe without --publications on a publications-only lane: %v\n%s", err, out)
+	}
+	if sub := b.subscription(t, "only"); !sub.PublicationsOnly || sub.Connected {
+		t.Fatalf("after the repeated command: publications_only %t, connected %t", sub.PublicationsOnly, sub.Connected)
+	}
+	requireNoFollowerReads(t, a, 0, "only", "after the restart and the repeated command")
 
 	since := b.subscription(t, "only").Since
 	mark := len(readFileString(a.logPath))

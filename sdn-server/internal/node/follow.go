@@ -58,7 +58,7 @@ package node
 // to followFileName first, so a crash between the two writes cannot leave
 // an unsubscribed lane in followFileName alone. An unsubscribe made under
 // 1.1.9 (during a rollback) removes the lane from followFileName only, so
-// the lane comes back with the next 1.2.0 start. A file that does not read
+// the lane comes back with the next start of 1.1.10 or later. A file that does not read
 // at start is moved aside, never overwritten: no lane runs and no
 // subscription changes until a readable copy is in place (alert
 // subscriptions_unreadable).

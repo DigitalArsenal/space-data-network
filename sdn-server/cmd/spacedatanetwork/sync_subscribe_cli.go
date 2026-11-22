@@ -213,10 +213,31 @@ func requireLane(o syncSubscribeOptions) error {
 	return nil
 }
 
+// planLane reads a lane's plan, which has the node read the producer's
+// statement. A lane held publications only is not planned unless the command
+// names the mode it changes to: its producer is asked nothing, and a command
+// repeated without --publications would otherwise ask it.
+func planLane(ctx context.Context, c *adminClient, o syncSubscribeOptions, plan *api.LanePlan) error {
+	if o.Publications == "" {
+		var list syncSubscriptionList
+		if _, err := syncAPICall(ctx, c, http.MethodGet, api.SyncSubscriptionsPath, "", nil, &list); err != nil {
+			return err
+		}
+		schema := syncwire.NormalizeSchema(o.Schema)
+		for _, s := range list.Subscriptions {
+			if s.PublicationsOnly && syncwire.NormalizeSchema(s.Schema) == schema && s.ProviderID == o.ProviderID && s.SourceName == o.SourceName && s.Producer == o.From {
+				return fmt.Errorf("%s %s/%s from %s is subscribed publications only: nothing is changed and the producer is not asked; --publications keep or --publications stream changes it and reads the producer's statement", schema, o.ProviderID, o.SourceName, o.From)
+			}
+		}
+	}
+	_, err := syncAPICall(ctx, c, http.MethodGet, api.SyncPlanPath+"?"+planQuery(o), "", nil, plan)
+	return err
+}
+
 // subscribeOne plans and, when it fits or force, subscribes.
 func subscribeOne(ctx context.Context, c *adminClient, o syncSubscribeOptions) (api.LanePlan, bool, error) {
 	var plan api.LanePlan
-	if _, err := syncAPICall(ctx, c, http.MethodGet, api.SyncPlanPath+"?"+planQuery(o), "", nil, &plan); err != nil {
+	if err := planLane(ctx, c, o, &plan); err != nil {
 		return plan, false, err
 	}
 	if plan.Refusal != "" && !o.Force {
@@ -390,7 +411,7 @@ func runSyncSubscribeFromLedger(cmd *cobra.Command, o syncSubscribeOptions) erro
 			if o.Yes {
 				plan, r.Subscribed, err = subscribeOne(ctx, c, lo)
 			} else {
-				_, err = syncAPICall(ctx, c, http.MethodGet, api.SyncPlanPath+"?"+planQuery(lo), "", nil, &plan)
+				err = planLane(ctx, c, lo, &plan)
 			}
 			if err != nil {
 				r.Error = err.Error()

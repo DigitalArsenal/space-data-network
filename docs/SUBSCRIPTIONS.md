@@ -199,8 +199,13 @@ subscribes to a lane that opens no stream: the node asks the producer nothing
 for it (no statement, no batch list, no page, no record by content address)
 and imports each publication of the lane through the `$PNM` path as it comes,
 at once, with the lane's retention rule applied as under `--publications
-keep`. The stored-`$PNM` catch-up at start imports what was published while
-the node was down. Each publication is imported under the running guard
+keep`. At start the stored-`$PNM` catch-up imports the newest publication of
+the lane that the node received and had not imported. A publication the node
+did not receive (made while it was stopped or out of reach) is not fetched
+afterwards: the lane is current again at the producer's next publication, and
+under a keep-all rule the records only that missed batch carried are not
+imported. A `sync subscribe` for the lane without `--publications` is
+refused, so the producer is not asked for its statement by mistake. Each publication is imported under the running guard
 above (the shared reservation, the free disk reserve, the record ceiling,
 the import's size caps); there is no first read to check before the
 subscription, and `--start` is refused with it. `sync subscriptions` shows
