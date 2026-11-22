@@ -559,6 +559,37 @@ func f4IdentityLess(a, c format4.Tag) bool {
 
 // ---- raw records (datasync v1, /api/v1/data) -------------------------------------------
 
+// recordSequenceHead is a rowid cursor's boundary, RawRecordHead's MaxRowID
+// under UseRowIDCursor without its count: the filter's MaxRowID when it
+// names one, else the type's newest sequence from the maintained type
+// summary (never before AfterRowID). It reads no record; a HEAD of a lane of
+// several batches reads every record of the lane (format 1 answered
+// MAX(rowid) with one b-tree seek).
+func (b format4Backend) recordSequenceHead(filter RawRecordQuery) (int64, error) {
+	if err := b.closed(); err != nil {
+		return 0, err
+	}
+	if err := b.CheckFullTextSearch(filter.SchemaName, filter.Search); err != nil {
+		return 0, err
+	}
+	schemaName := strings.TrimSpace(filter.SchemaName)
+	if schemaName == "" {
+		return 0, errors.New("schema name is required")
+	}
+	typ, err := f4Type(schemaName)
+	if err != nil {
+		return 0, err
+	}
+	if filter.MaxRowID > 0 {
+		return filter.MaxRowID, nil
+	}
+	h, err := b.f4TypeHead(typ)
+	if err != nil {
+		return 0, fmt.Errorf("raw record head failed: %w", err)
+	}
+	return max(h.MaxSeq, filter.AfterRowID, 0), nil
+}
+
 func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
 	if err := b.closed(); err != nil {
 		return nil, err

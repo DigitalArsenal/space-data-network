@@ -104,6 +104,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -186,8 +187,29 @@ const (
 	followDiskReserve    = 1 << 30
 )
 
-// followStatementWait bounds one read of a producer's statement.
-const followStatementWait = 60 * time.Second
+// followStatementWait bounds one read of a producer's statement: long
+// enough for a producer before 1.1.13, whose statement reads every record of
+// the lane twice and goes on after the reader gives up, to answer once
+// instead of being asked again (a producer from 1.1.13 answers from its
+// counters).
+const followStatementWait = 5 * time.Minute
+
+// The wait before a failed followed stream is opened again: it doubles from
+// followBackoffMin after each connection that delivered no page, up to
+// followBackoffMax, each wait drawn within followBackoffJitter of it, and
+// starts again at followBackoffMin after a connection that delivered a page.
+// A busy refusal is waited at least its retry hint.
+var (
+	followBackoffMin    = time.Second
+	followBackoffMax    = 20 * time.Minute
+	followBackoffJitter = 0.2
+)
+
+// followBackoffWait is the wait drawn for backoff.
+func followBackoffWait(backoff time.Duration) time.Duration {
+	f := 1 + followBackoffJitter*(2*rand.Float64()-1)
+	return time.Duration(float64(backoff) * f)
+}
 
 // FollowKey names one followed lane.
 type FollowKey struct {
@@ -1186,8 +1208,11 @@ func (m *followManager) startLocked(st FollowStatus) {
 }
 
 // run follows one lane until ctx ends, reconnecting after a failure. The
-// wait before a reconnect doubles up to 30 s and starts again at 1 s after a
-// connection that delivered a page.
+// wait before a reconnect doubles from followBackoffMin up to
+// followBackoffMax (with jitter) and starts again after a connection that
+// delivered a page: a producer that cannot answer a lane is not asked again
+// every minute and a half for as long as it cannot, and the lane's $PNM
+// publications import meanwhile.
 func (m *followManager) run(ctx context.Context, e *followEntry) {
 	if followStartDelay != nil {
 		m.mu.Lock()
@@ -1199,16 +1224,20 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		case <-time.After(followStartDelay(source)):
 		}
 	}
-	backoff := time.Second
+	backoff := followBackoffMin
 	for ctx.Err() == nil {
 		pages, err := m.followGuarded(ctx, e)
 		if ctx.Err() != nil {
 			return
 		}
 		if pages > 0 {
-			backoff = time.Second
+			backoff = followBackoffMin
 		}
-		wait := backoff
+		wait := followBackoffWait(backoff)
+		var remote *syncwire.RemoteError
+		if errors.As(err, &remote) && remote.Code == "busy" {
+			wait = max(wait, time.Duration(remote.RetryAfterMs)*time.Millisecond)
+		}
 		stopped := errors.Is(err, errFollowStopped)
 		if stopped {
 			wait = followStoppedWait
@@ -1250,7 +1279,7 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 			return
 		case <-time.After(wait):
 		}
-		backoff = min(backoff*2, 30*time.Second)
+		backoff = min(backoff*2, followBackoffMax)
 	}
 }
 
