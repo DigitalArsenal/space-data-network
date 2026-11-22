@@ -397,7 +397,12 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 			result, err := publish(workCtx)
 			run.result, run.err = result, err
 			stopped := errors.Is(context.Cause(workCtx), errPublicationsStopped)
-			s.reportDatasetPublication(req, s.now().Sub(run.started), result, err, stopped)
+			// A redo that found its lane published since is no failure:
+			// resumePublication logs it.
+			var outdated *redoOutdatedError
+			if !errors.As(err, &outdated) {
+				s.reportDatasetPublication(req, s.now().Sub(run.started), result, err, stopped)
+			}
 			if err == nil || !stopped {
 				runs.unmark(req)
 			}

@@ -475,6 +475,21 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 		return nil, atPublicationStep("wait for the lane", err)
 	}
 	defer release()
+	if mark, redo := redoMarkOf(ctx); redo {
+		// A redo of a mark checks it again once it holds the lane: a
+		// publication of another batch that held the lane while this one
+		// waited for it may have published newer data (outdatedMark).
+		reason, superseded, err := activeService.outdatedMark(ctx, mark)
+		if err != nil {
+			return nil, atPublicationStep("check the lane's newest series", err)
+		}
+		if reason != "" {
+			return nil, &redoOutdatedError{lane: datasetPublicationLaneName(activeReq), batch: strings.TrimSpace(activeReq.BatchID), reason: reason, superseded: superseded}
+		}
+	}
+	if publicationLaneHeld != nil {
+		publicationLaneHeld(ctx, activeReq)
+	}
 	if at, retracted, err := activeStore.DatasetPublicationLaneRetractedAt(storage.DatasetPublicationLane{SchemaName: schema, ProviderID: activeReq.ProviderID, SourceName: activeReq.SourceName}); err != nil {
 		return nil, atPublicationStep("check retraction", err)
 	} else if retracted {

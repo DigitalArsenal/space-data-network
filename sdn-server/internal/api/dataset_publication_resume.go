@@ -22,16 +22,22 @@ package api
 //
 // The marks are read when the publication service starts, before any flow
 // can start a publication, and handled once the node answers ready
-// (ResumeInterruptedPublications), newest first, one at a time. For each, one
-// row of the store is read: the newest series of the mark's lane
-// (NewestDatasetPublicationSeries). No record is read to decide.
-//   - The lane has a series that started at or after the mark's publication
-//     was requested: if it is of the mark's own batch, the publication
-//     completed (its series is recorded before its mark is removed);
-//     otherwise the lane has moved on to newer data, and publishing the
-//     mark's batch now would make it the lane's newest series and move the
-//     lane's IPNS pointer back to it. Either way the mark is removed and
+// (ResumeInterruptedPublications), one at a time: on a snapshot lane
+// (publishing.retention.lanes[].snapshot_batches) newest first, on any other
+// lane oldest first. For each, one row of the store is read. No record is
+// read to decide.
+//   - On a snapshot lane, the row is the lane's newest series
+//     (NewestDatasetPublicationSeries). When it started at or after the
+//     mark's publication was requested: if it is of the mark's own batch, the
+//     publication completed (its series is recorded before its mark is
+//     removed); otherwise the lane has moved on to newer data, and publishing
+//     the mark's batch now would make it the lane's newest series and move
+//     the lane's IPNS pointer back to it. Either way the mark is removed and
 //     nothing is published.
+//   - On any other lane the batches are parts of one dataset, each published
+//     once, and a later part takes no earlier part's place: the row is the
+//     newest series of the mark's own batch, and only its completion removes
+//     the mark. Every other marked part is published again.
 //   - The mark is older than publicationMarkMaxAge: removed, not published.
 //   - publicationRedoMaxAttempts attempts were already started (counted in
 //     the mark, written durably before each attempt starts, so an attempt
@@ -42,7 +48,10 @@ package api
 //     publication_failed alert, and the publication is made again; when it
 //     completes, or when its mark is dropped by the first rule, the report
 //     is cleared. A failed attempt is retried with the auto-publisher's
-//     backoff, and the two rules above are checked again before each attempt.
+//     backoff. The lane and age rules are checked again before each attempt,
+//     and again once the attempt holds its lane: a publication of another
+//     batch that held the lane while the attempt waited for it may have
+//     published newer data.
 //
 // A publication is identified by its request, so publishing a mark again is
 // the same publication: a request for it that arrives meanwhile waits for it.
@@ -93,11 +102,13 @@ const publicationMarkMaxAge = 24 * time.Hour
 
 // The faults of a test build (dataset_publication_faults_e2e.go); nil in
 // every release build. publicationRunFault runs at the start of every
-// publication run; publicationRedoDelay is how long the handling of a mark
-// waits first.
+// publication run. publicationRedoGate runs before a mark is handled and
+// returns false when ctx ended while it waited. publicationLaneHeld runs once
+// a publication holds its lane, after the check of a redo.
 var (
-	publicationRunFault  func(req DatasetPublicationRequest)
-	publicationRedoDelay func(sourceName string) time.Duration
+	publicationRunFault func(req DatasetPublicationRequest)
+	publicationRedoGate func(ctx context.Context, req DatasetPublicationRequest) bool
+	publicationLaneHeld func(ctx context.Context, req DatasetPublicationRequest)
 )
 
 // markablePublication reports whether req names a whole lane or one batch
@@ -135,13 +146,49 @@ type publicationMark struct {
 	path     string
 }
 
-// redoContextKey marks the context of an attempt to publish a mark again:
-// its run keeps the mark the attempt wrote instead of writing a new one.
+// redoContextKey carries, in the context of an attempt to publish a mark
+// again, the mark: its run keeps the mark the attempt wrote instead of
+// writing a new one, and checks the mark again once it holds its lane.
 type redoContextKey struct{}
 
 func publicationRedo(ctx context.Context) bool {
-	redo, _ := ctx.Value(redoContextKey{}).(bool)
+	_, redo := redoMarkOf(ctx)
 	return redo
+}
+
+func redoMarkOf(ctx context.Context) (publicationMark, bool) {
+	m, ok := ctx.Value(redoContextKey{}).(publicationMark)
+	return m, ok
+}
+
+// redoOutdatedError ends a redo's run that found, once it held its lane,
+// that the mark is not published again (outdatedMark). The run reports
+// nothing; resumePublication logs it and removes the mark.
+type redoOutdatedError struct {
+	lane, batch, reason string
+	superseded          bool
+}
+
+func (e *redoOutdatedError) Error() string {
+	return fmt.Sprintf("dataset publication %s batch %q is not published again: %s", e.lane, e.batch, e.reason)
+}
+
+// snapshotLane reports whether the lane of req is a snapshot lane
+// (publishing.retention.lanes[].snapshot_batches): each batch is a complete
+// snapshot of the lane, so a newer batch replaces an older one. The batches
+// of any other lane are parts, each published once.
+func (s *ConcreteDatasetPublicationService) snapshotLane(req DatasetPublicationRequest) bool {
+	retention, _ := s.hygiene.policy()
+	_, snapshots := retention.PolicyFor(normalizeDatasetPublicationSchema(req.Schema), strings.TrimSpace(req.ProviderID), strings.TrimSpace(req.SourceName))
+	return snapshots
+}
+
+// redoScopeName names a batch scope in the texts of this file.
+func redoScopeName(batch string) string {
+	if batch == "" {
+		return "the whole lane"
+	}
+	return fmt.Sprintf("batch %q", batch)
 }
 
 // mark records req, whose run started at started, as running. It reports
@@ -283,8 +330,8 @@ func (r *publicationRuns) readPublicationMarks() []publicationMark {
 		}
 		marks = append(marks, m)
 	}
-	// Newest first: a lane's newest publication made again supersedes the
-	// lane's older marks (outdatedMark).
+	// Newest first; ResumeInterruptedPublications orders each lane's marks
+	// by the lane's kind (orderMarks).
 	sort.Slice(marks, func(i, j int) bool { return marks[i].started.After(marks[j].started) })
 	return marks
 }
@@ -327,18 +374,10 @@ func (s *ConcreteDatasetPublicationService) ResumeInterruptedPublications(ctx co
 		return
 	}
 	log.Infof("Dataset publications: the node is ready; handling the %d mark(s) the last process left", len(marks))
+	s.orderMarks(marks)
 	for _, mark := range marks {
-		if publicationRedoDelay != nil {
-			if wait := publicationRedoDelay(mark.req.SourceName); wait > 0 {
-				log.Warnf("test build: the mark of %s batch %q is handled after %s", datasetPublicationLaneName(mark.req), mark.req.BatchID, wait)
-				timer := time.NewTimer(wait)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return
-				case <-timer.C:
-				}
-			}
+		if publicationRedoGate != nil && !publicationRedoGate(ctx, mark.req) {
+			return
 		}
 		if ctx.Err() != nil {
 			return
@@ -349,12 +388,48 @@ func (s *ConcreteDatasetPublicationService) ResumeInterruptedPublications(ctx co
 	}
 }
 
-// outdatedMark says why m's publication is not made again ("" when it is):
-// its lane has a series that started at or after it was requested, or it is
-// older than publicationMarkMaxAge. It reads one row of the store.
+// orderMarks orders the marks of each lane: newest first on a snapshot lane,
+// whose newest batch published supersedes the older marks (outdatedMark);
+// oldest first on any other lane, whose batches are parts each published
+// once, in the order they were requested. Lanes are taken in name order.
+func (s *ConcreteDatasetPublicationService) orderMarks(marks []publicationMark) {
+	snapshot := make(map[string]bool, len(marks))
+	for _, m := range marks {
+		snapshot[datasetPublicationLaneName(m.req)] = s.snapshotLane(m.req)
+	}
+	sort.SliceStable(marks, func(i, j int) bool {
+		li, lj := datasetPublicationLaneName(marks[i].req), datasetPublicationLaneName(marks[j].req)
+		if li != lj {
+			return li < lj
+		}
+		if snapshot[li] {
+			return marks[i].started.After(marks[j].started)
+		}
+		return marks[i].started.Before(marks[j].started)
+	})
+}
+
+// outdatedMark says why m's publication is not made again ("" when it is).
+// It reads one row of the store.
+//   - On a snapshot lane: the lane has a series, of any batch, that started
+//     at or after m's publication was requested (of m's own batch, it
+//     completed; of another, it is newer data).
+//   - On any other lane, whose batches are parts each published once: m's
+//     own batch has a series that started at or after it was requested (it
+//     completed). A later part takes no part's place.
+//   - On every lane: m is older than publicationMarkMaxAge.
 func (s *ConcreteDatasetPublicationService) outdatedMark(ctx context.Context, m publicationMark) (reason string, superseded bool, err error) {
 	lane := storage.DatasetPublicationLane{SchemaName: m.req.Schema, ProviderID: m.req.ProviderID, SourceName: m.req.SourceName}
-	batch, at, ok, err := s.store.NewestDatasetPublicationSeries(ctx, lane)
+	var batch string
+	var at time.Time
+	var ok bool
+	if s.snapshotLane(m.req) {
+		batch, at, ok, err = s.store.NewestDatasetPublicationSeries(ctx, lane)
+	} else {
+		var series storage.DatasetPublicationSeries
+		series, ok, err = s.store.LatestDatasetPublicationSeriesContext(ctx, lane, m.req.BatchID)
+		batch, at = series.BatchID, series.PublishedAt
+	}
 	if err != nil {
 		return "", false, err
 	}
@@ -364,7 +439,7 @@ func (s *ConcreteDatasetPublicationService) outdatedMark(ctx context.Context, m 
 			return fmt.Sprintf("its publication completed before the node stopped (series of %s, requested %s)", at.Format(time.RFC3339Nano), requested), false, nil
 		}
 		return fmt.Sprintf("the lane published %s at %s, after this publication was requested at %s; publishing it now would replace newer data",
-			scopeName(batch), at.Format(time.RFC3339Nano), requested), true, nil
+			redoScopeName(batch), at.Format(time.RFC3339Nano), requested), true, nil
 	}
 	if age := s.now().Sub(m.started); age > publicationMarkMaxAge {
 		return fmt.Sprintf("it was requested %s ago (%s), longer than the %s after which a publication is not made again",
@@ -385,6 +460,23 @@ func (s *ConcreteDatasetPublicationService) clearRedoReport(req DatasetPublicati
 	lane := datasetPublicationLaneName(req)
 	if left := s.runs.coverScope(lane, strings.TrimSpace(req.BatchID)); left == 0 {
 		s.alerts.Clear(ops.KindPublicationFailed, lane)
+	}
+}
+
+// dropMark removes the mark of req, which is not published again for reason,
+// and clears its report as interrupted when this start made one.
+func (s *ConcreteDatasetPublicationService) dropMark(req DatasetPublicationRequest, reason string, superseded, reported bool) {
+	lane, batch := datasetPublicationLaneName(req), strings.TrimSpace(req.BatchID)
+	s.runs.unmark(req)
+	cleared := ""
+	if reported {
+		s.clearRedoReport(req)
+		cleared = "; its report as interrupted is cleared"
+	}
+	if superseded {
+		log.Warnf("Dataset publication %s batch %q is NOT published again: %s. Its mark is removed%s", lane, batch, reason, cleared)
+	} else {
+		log.Infof("Dataset publication %s batch %q is not published again: %s. Its mark is removed%s", lane, batch, reason, cleared)
 	}
 }
 
@@ -417,17 +509,7 @@ func (s *ConcreteDatasetPublicationService) resumePublication(ctx context.Contex
 			return true
 		}
 		if reason != "" {
-			s.runs.unmark(req)
-			cleared := ""
-			if reported {
-				s.clearRedoReport(req)
-				cleared = "; its report as interrupted is cleared"
-			}
-			if superseded {
-				log.Warnf("Dataset publication %s batch %q is NOT published again: %s. Its mark is removed%s", lane, batch, reason, cleared)
-			} else {
-				log.Infof("Dataset publication %s batch %q is not published again: %s. Its mark is removed%s", lane, batch, reason, cleared)
-			}
+			s.dropMark(req, reason, superseded, reported)
 			return true
 		}
 		if m.attempts >= publicationRedoMaxAttempts {
@@ -454,7 +536,15 @@ func (s *ConcreteDatasetPublicationService) resumePublication(ctx context.Contex
 					"it was running when the node stopped and did not complete; it is published again (attempt %d of %d)", m.attempts, publicationRedoMaxAttempts))
 			}
 		}
-		_, err = s.PublishDatasetUpdate(context.WithValue(ctx, redoContextKey{}, true), req)
+		_, err = s.PublishDatasetUpdate(context.WithValue(ctx, redoContextKey{}, m), req)
+		var outdated *redoOutdatedError
+		if errors.As(err, &outdated) {
+			// The lane published since the check above, while this attempt
+			// waited for it (publishSelectedDatasetUpdate checks again once
+			// it holds the lane). The attempt published nothing.
+			s.dropMark(req, outdated.reason, outdated.superseded, reported)
+			return true
+		}
 		if err == nil {
 			// Also a completion with no records (its batch was retired
 			// meanwhile), which clears no alert by itself.
