@@ -173,6 +173,8 @@ func TestPublicationInterruptedCrashBoundRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
 	}
+	// The store format and the engine cache of every publication daemon.
+	publicationBinary(t)
 	a := newPublicationDaemon(t, publicationFollowFaultsBinary(t), "crash-bound", "", "", "keep-all")
 	a.start(t)
 
