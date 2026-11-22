@@ -265,6 +265,30 @@ func (s *FlatSQLStore) LatestDatasetPublicationSeriesContext(ctx context.Context
 	return series, true, nil
 }
 
+// NewestDatasetPublicationSeries returns the batch and published_at of a
+// lane's newest recorded series of any batch scope, without members. It reads
+// one row of the lane's series: the lane's primary-key prefix, ordered by
+// published_at.
+func (s *FlatSQLStore) NewestDatasetPublicationSeries(ctx context.Context, lane DatasetPublicationLane) (batchID string, publishedAt time.Time, ok bool, err error) {
+	lane = lane.normalized()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var at int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT batch_id, published_at
+		FROM sdn_dataset_publication_series
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ?
+		ORDER BY published_at DESC, rowid DESC
+		LIMIT 1`, lane.SchemaName, lane.ProviderID, lane.SourceName).Scan(&batchID, &at)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", time.Time{}, false, nil
+		}
+		return "", time.Time{}, false, fmt.Errorf("newest %s publication series: %w", lane.SchemaName, err)
+	}
+	return batchID, time.Unix(0, at).UTC(), true, nil
+}
+
 // ListDatasetPublicationSeries lists a lane's series newest first, with members.
 func (s *FlatSQLStore) ListDatasetPublicationSeries(lane DatasetPublicationLane) ([]DatasetPublicationSeries, error) {
 	lane = lane.normalized()

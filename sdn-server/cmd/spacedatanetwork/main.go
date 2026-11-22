@@ -1392,8 +1392,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				publicationService.SetAlerts(n.Alerts())
 				publications = publicationService
 				// Publications the last process ended during, or refused
-				// while it stopped, are published again.
-				go publicationService.ResumeInterruptedPublications(ctx)
+				// while it stopped: read now, before any flow can start a
+				// publication, and published again once the node is ready
+				// (resumeInterruptedPublicationsWhenReady).
+				publicationService.ReadInterruptedPublications()
 				// What publications that did not complete before the last
 				// stop left in the publication directory.
 				go publicationService.SweepPublicationFiles()
@@ -3089,6 +3091,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
+	go resumeInterruptedPublicationsWhenReady(ctx, publications, readiness)
 	if trialUpdateID != "" && homePaths.IsHome() {
 		go watchTrial(ctx, homePaths, trialUpdateID, readiness)
 	}
@@ -3346,8 +3349,6 @@ func awaitPublicationsForUpdate(publications *api.ConcreteDatasetPublicationServ
 		return
 	}
 	since := time.Now()
-	log.Warnf("Update shutdown: waiting up to %s for %d running dataset publication(s) to finish before stopping; new publications are refused until the restart",
-		updatePublicationWait, running)
 	if paths.Root != "" {
 		from, until := sdnupdate.StopWaitTimes(since, updatePublicationWait)
 		if err := sdnupdate.WriteStopWait(paths, sdnupdate.StopWait{For: sdnupdate.StopWaitPublications, Running: running, PID: os.Getpid(), Since: from, Until: until}); err != nil {
@@ -3359,6 +3360,9 @@ func awaitPublicationsForUpdate(publications *api.ConcreteDatasetPublicationServ
 			}
 		}()
 	}
+	// Logged after the wait is recorded for status.
+	log.Warnf("Update shutdown: waiting up to %s for %d running dataset publication(s) to finish before stopping; new publications are refused until the restart",
+		updatePublicationWait, running)
 	ctx, cancel := context.WithTimeout(context.Background(), updatePublicationWait)
 	defer cancel()
 	go func() {
@@ -3375,6 +3379,33 @@ func awaitPublicationsForUpdate(publications *api.ConcreteDatasetPublicationServ
 		return
 	}
 	log.Infof("Update shutdown: every running dataset publication finished after %s", took())
+}
+
+// resumeInterruptedPublicationsWhenReady publishes again, once the node
+// answers ready, the publications the last process did not complete
+// (ResumeInterruptedPublications). Readiness does not depend on them, so they
+// never hold up /ready or an update's health gate; and they do not start
+// before it, so a publication that ends the process cannot keep a new build
+// from answering ready. Without an admin listener (readiness nil) nothing
+// can ask, and they start at once.
+func resumeInterruptedPublicationsWhenReady(ctx context.Context, publications *api.ConcreteDatasetPublicationService, readiness func(context.Context) string) {
+	if publications == nil {
+		return
+	}
+	for readiness != nil {
+		probeCtx, cancel := context.WithTimeout(ctx, readyProbeTimeout+time.Second)
+		reason := readiness(probeCtx)
+		cancel()
+		if reason == "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+	publications.ResumeInterruptedPublications(ctx)
 }
 
 // defaultAdminWriteTimeout bounds writing one admin response.

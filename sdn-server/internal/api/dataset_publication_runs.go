@@ -173,6 +173,9 @@ type publicationRuns struct {
 	// marks is the directory of the durable marks of running publications
 	// (dataset_publication_resume.go); "" keeps none.
 	marks string
+	// resume holds the marks a previous process left, read at start, until
+	// ResumeInterruptedPublications handles them.
+	resume []publicationMark
 }
 
 func newPublicationRuns() *publicationRuns {
@@ -351,12 +354,12 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 	runs.mu.Lock()
 	if runs.stopped {
 		runs.mu.Unlock()
-		return nil, runs.refuseForRestart(req, errPublicationsStopped)
+		return nil, runs.refuseForRestart(req, errPublicationsStopped, s.now())
 	}
 	run, joined := runs.byKey[key]
 	if !joined && runs.held {
 		runs.mu.Unlock()
-		return nil, runs.refuseForRestart(req, errPublicationsHeld)
+		return nil, runs.refuseForRestart(req, errPublicationsHeld, s.now())
 	}
 	if !joined {
 		run = &publicationRun{started: s.now(), done: make(chan struct{})}
@@ -370,10 +373,11 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 	}
 	runs.mu.Unlock()
 
-	if !joined {
+	if !joined && !publicationRedo(ctx) {
 		// Kept until the run ends other than by the node's stop: a mark left
-		// at a start is a publication the process ended during.
-		runs.mark(req)
+		// at a start is a publication the process ended during. An attempt
+		// to publish a mark again keeps the mark it wrote, with its count.
+		runs.mark(req, run.started)
 	}
 	if joined {
 		log.Infof("Dataset publication %s batch %q is already running (started %s ago): this request waits for its result",
@@ -387,6 +391,9 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 			defer stopWithNode()
 			// A publication that returned success is reported as one, also
 			// when its context ended after it completed.
+			if publicationRunFault != nil {
+				publicationRunFault(req)
+			}
 			result, err := publish(workCtx)
 			run.result, run.err = result, err
 			stopped := errors.Is(context.Cause(workCtx), errPublicationsStopped)

@@ -45,7 +45,14 @@ table ExportIndex {
   query_sha256:string; result_sha256:string; shard_sha256:string; shard_cid:string;
   shard_file:string; record_count:int; records:[IndexRecord]; indexes:MaterializedIndexes;
 }
-table BatchAction { schema:string; provider:string; source:string; batch:string; action:string; }
+// A batch action. A mark of a running or refused publication also states when
+// the publication was first requested (started, Unix nanoseconds) and how
+// many attempts to publish it again were started after the process that ran
+// it ended (attempts).
+table BatchAction {
+  schema:string; provider:string; source:string; batch:string; action:string;
+  started:long; attempts:int;
+}
 // Durable auxiliary publication-upsert record. Cutoffs are absent outside paired snapshots.
 // unavailable_since is this node's own first observation (Unix seconds) that the
 // row's local assets were missing; 0 means available. Journal replay must keep it.

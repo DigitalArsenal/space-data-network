@@ -151,6 +151,9 @@ func TestPublicationUpdateRestartWaitsRealDaemons(t *testing.T) {
 
 	answer := a.updateShutdown(t, paths)
 	t.Logf("update shutdown answer: %v", answer)
+	// The daemon begins its wait (and writes the wait for status) after it
+	// has answered the handshake.
+	publicationAwaitLog(t, a, "Update shutdown: waiting up to ", time.Minute)
 	status, statusErr := a.cli(t, "status")
 	second, secondErr := publishWithClientDeadline(a, "updwait", "second", 30*time.Second)
 
@@ -257,9 +260,6 @@ func TestPublicationInterruptedRedoneRealDaemons(t *testing.T) {
 	const lane = "OMM.fbs publication-e2e/interrupted"
 	started := `publication fingerprint OMM.fbs publication-e2e/interrupted/first: `
 	completed := `Dataset publication ` + lane + ` batch "first" completed in `
-	// A publication reads its first window once; the change check before a
-	// redo reads the fingerprint only.
-	read := `Dataset publication window OMM.fbs publication-e2e/interrupted/first offset=0 `
 
 	first := publishInBackground(a, "interrupted", "first")
 	publicationAwaitLog(t, a, started, 3*time.Minute)
@@ -278,8 +278,8 @@ func TestPublicationInterruptedRedoneRealDaemons(t *testing.T) {
 	if !strings.Contains(got, ": 150000 records, manifest ") {
 		t.Fatalf("the publication published again after the restart: %s", got)
 	}
-	if runs := strings.Count(readFileString(a.logPath), read); runs != 2 {
-		t.Fatalf("batch first was published %d times, want twice (the interrupted run and its redo)", runs)
+	if runs := strings.Count(readFileString(a.logPath), started); runs != 2 {
+		t.Fatalf("batch first was read for publication %d times, want twice (the interrupted run and its redo)", runs)
 	}
 	if alert := publicationAlert(t, a, lane); alert != "" {
 		t.Fatalf("the lane's alert after the publication completed: %s", alert)
@@ -290,8 +290,8 @@ func TestPublicationInterruptedRedoneRealDaemons(t *testing.T) {
 	a.start(t)
 	time.Sleep(20 * time.Second)
 	log = readFileString(a.logPath)
-	if runs := strings.Count(log, read); runs != 2 {
-		t.Fatalf("batch first was published %d times after a further restart, want twice", runs)
+	if runs := strings.Count(log, started); runs != 2 {
+		t.Fatalf("batch first was read for publication %d times after a further restart, want twice", runs)
 	}
 	if count := strings.Count(log, interrupted); count != 1 {
 		t.Fatalf("the interrupted publication was reported %d times, want once", count)
