@@ -293,7 +293,7 @@ func TestPublicationHoldBackoffRealDaemons(t *testing.T) {
 	for {
 		var at []time.Time
 		for _, m := range holdFailure.FindAllStringSubmatch(readFileString(b.logPath), -1) {
-			if ts, err := time.Parse("2006-01-02T15:04:05.000-0700", m[1]); err == nil {
+			if ts, err := time.Parse("2006-01-02T15:04:05.000Z0700", m[1]); err == nil {
 				at = append(at, ts)
 			}
 		}
