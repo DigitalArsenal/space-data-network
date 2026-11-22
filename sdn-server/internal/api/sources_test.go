@@ -466,7 +466,13 @@ func TestDomainProofRefusals(t *testing.T) {
 		{
 			name: "statement names another key",
 			proof: domainProofSpec{domains: two, statement: func(publicHex, peer string) string {
-				return testDomainStatement(domainProofVersionLine, two, "00"+publicHex[2:], peer, now-60, now+3600)
+				// Another key whatever the key is: "00" in place of the first
+				// byte left one key in 256 as it was, and its proof verified.
+				other := "00"
+				if publicHex[:2] == other {
+					other = "01"
+				}
+				return testDomainStatement(domainProofVersionLine, two, other+publicHex[2:], peer, now-60, now+3600)
 			}},
 			want: errDomainProofStatement,
 		},
