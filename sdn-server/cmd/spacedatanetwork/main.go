@@ -3072,8 +3072,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
+	trialDone := make(chan struct{})
 	if trialUpdateID != "" && homePaths.IsHome() {
-		go watchTrial(ctx, homePaths, trialUpdateID, readiness)
+		go func() {
+			defer close(trialDone)
+			watchTrial(ctx, homePaths, trialUpdateID, readiness)
+		}()
+	} else {
+		close(trialDone)
+	}
+	if publications != nil {
+		// The checks of the failed batches the last run stopped with read the
+		// store: they start once the node is ready and an update's trial is
+		// over, so they delay neither.
+		go startPublicationAlertChecksWhenReady(ctx, publications, readiness, trialDone)
 	}
 
 	// Wait for shutdown signal

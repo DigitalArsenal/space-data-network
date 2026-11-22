@@ -109,26 +109,28 @@ runs. `apps run --cancel-on-interrupt` cancels its own run only. The
 dashboard's Run now waits for the run as before; a page closed meanwhile no
 longer cancels it.
 
-**A publication alert clears once the failed batch's records are published,
-and survives a restart.** A `publication_failed` alert of a batch cleared
-only when that same batch was published, so the alert of a scheduled run
-whose publication failed stayed (health `degraded`) through every later
-successful run until the node restarted, and a restart dropped it whether
-or not anything was published. The node now records each failed scope in
-the store and decides from the store when it clears. A failed batch clears
-when a count of the records it holds now finds none unpublished: every one
-of them is in a completed publication's export (what a later run's
-publication carries when its pull returns those records again), or the batch
-holds none any more (expired or superseded); a completed publication of the
-whole batch itself clears it at once. The count runs after every
-failure in the lane, after every completed publication of a whole batch or
-of the whole lane, and at start; while any record is unpublished, the alert
-stays and says how many, and says that publishing the batch whole clears it.
-Only completed publications count, and only for the set they exported: a
-batch that gained records after its publication counts for none of its
-records until it is published whole again, and on a lane that publishes the
-publication journal's retained selection a record counts only when it was in
-that selection. A failed head of a batch or of the lane, a failed
+**A publication alert is decided from the store, clears when its batch is
+published or gone, and survives a restart.** A `publication_failed` alert
+of a batch cleared only when that same batch was published, and a restart
+dropped it whether or not anything was published. The node now records each
+failed scope in the store and decides from the store when it clears. A
+failed batch clears when a completed publication of the whole batch exported
+the set it holds now (equal fingerprints), or when the batch holds no
+records any more (a replace-current lane superseded them, they expired, or
+the lane was retracted). A publication of another batch never clears it: if
+every record of a failed batch also sits in other, published batches, the
+alert still stays until that batch is published whole or its records go,
+and publishing the batch whole clears it. The batch is checked at each of
+its failures, after each completed publication of the whole batch, when a
+supersede or an expiry removes records of its lane, and at start once the
+node answers ready; a check costs one fingerprint of the failed batch,
+whatever the size of the lane. A completed publication of the whole batch
+clears it when it is reported; the check after it raises the alert again
+when records arrived in the batch while that publication ran. A retraction
+of the lane clears every failed scope of the lane. A batch the snapshot
+guard refused says what clears it (a newer batch superseding it, or the
+guard no longer refusing it) instead of advising a publication the guard
+refuses again. A failed head of a batch or of the lane, a failed
 publication of the whole lane, a failed announcement of existing
 publications, and a failed batch of a datastore lane clear when the same
 operation completes again; a publication of a head never clears a failed

@@ -168,7 +168,10 @@ type FlatSQLStore struct {
 	// publicationContent answers for a publication file that is not on
 	// disk whether the node's IPFS repository holds its content
 	// (dataset_publication_content.go). Unset: only the files count.
-	publicationContent             atomic.Pointer[publicationContentHolder]
+	publicationContent atomic.Pointer[publicationContentHolder]
+	// laneRecordsRemoved is told when a supersede or an expiry removed
+	// records of a lane (lane_records_removed.go).
+	laneRecordsRemoved             atomic.Pointer[func(schemaName, providerID, sourceName string)]
 	publicationSourceKeys          atomic.Pointer[map[publicationSourceKey]bool]
 	publicationEnabled             atomic.Bool
 	publicationGroupMu             sync.Mutex

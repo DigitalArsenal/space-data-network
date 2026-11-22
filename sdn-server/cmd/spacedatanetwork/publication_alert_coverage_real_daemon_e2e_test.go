@@ -31,44 +31,27 @@ func postStatus(t *testing.T, d *publicationDaemon, method, path string, body []
 	return res.StatusCode, string(raw)
 }
 
-// awaitAlertAfter waits for the lane's publication_failed alert to say want,
-// and fails at once, naming it, when the alert clears instead.
-func awaitAlertAfter(t *testing.T, d *publicationDaemon, lane, want string, budget time.Duration) string {
-	t.Helper()
-	deadline := time.Now().Add(budget)
-	alert := ""
-	for time.Now().Before(deadline) {
-		alert = publicationAlert(t, d, lane)
-		if alert == "" {
-			t.Fatalf("the publication_failed alert of %s cleared; want it to say %q", lane, want)
-		}
-		if strings.Contains(alert, want) {
-			return alert
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	t.Fatalf("the publication_failed alert of %s does not say %q within %s: %q", lane, want, budget, alert)
-	return ""
-}
-
 // TestPublicationAlertBatchGainedRecordsRealDaemons publishes batch "y"
 // (two records), stores a third record in it, and fails its republication
 // at the announcement of its third window (SDN_E2E_PUBLICATION_FAULT): the
 // third record is in no completed publication. Batch "x" holds that third
 // record too and its publication fails. A completed series of "y" exists,
 // but it exported two records and "y" holds three now, so:
-//   - neither "y" nor "x" counts as published: the alert says 3 of the 3
-//     records of "y" and 1 of the 1 record of "x" are unpublished;
+//   - neither "y" nor "x" is published: the alert says 1 of the 3 records
+//     of "y" arrived after its last completed publication, and that no
+//     publication of the whole of "x" (1 record) completed;
 //   - an announcement of the existing publications of "y" announces the
 //     window of part one's completed publication only, not the windows the
 //     failed republication wrote;
 //   - the publication of an unrelated batch "z" completes and the alert
-//     stays, saying the same counts (it cleared here when any completed
-//     series of a batch counted, whatever the batch held since);
+//     stays, saying the same (it cleared here when any completed series of
+//     a batch counted, whatever the batch held since);
 //   - the publication of batch "w", holding the two records of part one,
-//     completes, and the alert, read after the count that publication
-//     prompts, says one of the three records of "y" is unpublished;
-//   - a publication of the whole of "y" as it is now clears it.
+//     completes, and the alert stays, saying the same: another batch's
+//     publication counts for nothing;
+//   - a publication of the whole of "y" as it is now removes "y", and the
+//     alert stays naming "x", whose record "y" holds (another batch);
+//   - a publication of the whole of "x" clears it.
 func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -93,7 +76,7 @@ func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 	if failed := publicationAwaitLog(t, d, `Dataset publication FAILED: `+lane+` batch "y", step "`, time.Minute); !strings.HasPrefix(failed, `announce"`) {
 		t.Fatalf("the republication of \"y\" did not fail at its announcement: %s", failed)
 	}
-	t.Logf("count of \"y\": %s", publicationAwaitLog(t, d, `Dataset publication `+lane+`: failed batch "y": `, time.Minute))
+	t.Logf("check of \"y\": %s", publicationAwaitLog(t, d, `Failed batch check `+lane+`: fingerprinted batch "y"`, time.Minute))
 
 	// "x", holding the record part two added to "y", fails.
 	d.ingestOMMFrames(t, source, "x", 0, frames[2:3])
@@ -101,7 +84,7 @@ func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 	status, answer = postStatus(t, d, "POST", "/api/v1/admin/dataset-updates/publish", bad)
 	t.Logf("the publication of \"x\" answered HTTP %d: %s", status, answer)
 	publicationAwaitLog(t, d, `Dataset publication FAILED: `+lane+` batch "x", step "`, time.Minute)
-	t.Logf("count of \"x\": %s", publicationAwaitLog(t, d, `Dataset publication `+lane+`: failed batch "x": `, time.Minute))
+	t.Logf("check of \"x\": %s", publicationAwaitLog(t, d, `Failed batch check `+lane+`: fingerprinted batch "x"`, time.Minute))
 
 	// The existing publications of "y": the window of part one's completed
 	// publication (2 records) and the three windows the failed
@@ -121,33 +104,56 @@ func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 	if pub := d.publish(t, "OMM.fbs", source, "z"); pub.RecordCount != 1 {
 		t.Fatalf("the publication of \"z\" answered %d records", pub.RecordCount)
 	}
-	alert := awaitAlertAfter(t, d, lane, `after the publication of batch \"z\"`, time.Minute)
-	t.Logf("alert after the publication of \"z\": %s", alert)
-	for _, want := range []string{
-		`batch \"x\" is unpublished: 1 of its 1 records are in no completed publication of the lane`,
-		`batch \"y\" is unpublished: 3 of its 3 records are in no completed publication of the lane`,
-	} {
-		if !strings.Contains(alert, want) {
-			t.Fatalf("the alert does not say %q: %s", want, alert)
-		}
-	}
+	both := `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 1 record; batch \"y\" is unpublished: 1 of its 3 records arrived after its last completed publication of the whole batch and are in no publication of it`
+	t.Logf("alert after the publication of \"z\": %s", alertStays(t, d, lane, both, 10*time.Second))
 
-	// A batch sharing the records of part one with "y": once its
-	// publication's count ran, the alert says one record of "y" is
-	// unpublished.
+	// A batch sharing the records of part one with "y": the alert stays as
+	// it was.
 	d.ingestOMMFrames(t, source, "w", 0, frames[:2])
 	if pub := d.publish(t, "OMM.fbs", source, "w"); pub.RecordCount != 2 {
 		t.Fatalf("the publication of \"w\" answered %d records", pub.RecordCount)
 	}
-	alert = awaitAlertAfter(t, d, lane, `after the publication of batch \"w\", batch \"x\" is unpublished: 1 of its 1 records are in no completed publication of the lane; batch \"y\" is unpublished: 1 of its 3 records are in no completed publication of the lane`, time.Minute)
-	t.Logf("alert after the publication of \"w\": %s", alert)
+	t.Logf("alert after the publication of \"w\": %s", alertStays(t, d, lane, both, 10*time.Second))
 
-	// The whole of "y" as it is now.
+	// The whole of "y" as it is now: "y" goes; "x" stays, though "y" holds
+	// its record.
 	if pub := d.publish(t, "OMM.fbs", source, "y"); pub.RecordCount != 3 {
 		t.Fatalf("the publication of the whole of \"y\" answered %d records", pub.RecordCount)
 	}
+	alert := alertStays(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 1 record`, 10*time.Second)
+	t.Logf("alert after the publication of the whole of \"y\": %s", alert)
+	if strings.Contains(alert, `batch \"y\" is unpublished`) {
+		t.Fatalf("the alert still names \"y\" after the publication of the whole of it: %s", alert)
+	}
+
+	// The whole of "x".
+	if pub := d.publish(t, "OMM.fbs", source, "x"); pub.RecordCount != 1 {
+		t.Fatalf("the publication of the whole of \"x\" answered %d records", pub.RecordCount)
+	}
 	awaitPublicationAlertCleared(t, d, lane, time.Minute)
-	t.Logf("cleared: every record of failed batch \"x\"%s", publicationLogAfter(t, d, `every record of failed batch "x"`))
+	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "x" is published`))
+}
+
+// alertStays checks, for budget, that the lane's publication_failed alert
+// stays active and says want, failing at once, naming it, when it clears or
+// says otherwise. It returns the alert.
+func alertStays(t *testing.T, d *publicationDaemon, lane, want string, budget time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	alert := ""
+	for {
+		alert = publicationAlert(t, d, lane)
+		if alert == "" {
+			t.Fatalf("the publication_failed alert of %s cleared; want it to stay saying %q", lane, want)
+		}
+		if !strings.Contains(alert, want) {
+			t.Fatalf("the publication_failed alert of %s does not say %q: %s", lane, want, alert)
+		}
+		if time.Now().After(deadline) {
+			return alert
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // TestPublicationAlertHeadPublicationRealDaemons fails the publication of a
@@ -167,7 +173,7 @@ func TestPublicationAlertHeadPublicationRealDaemons(t *testing.T) {
 	bad, _ := json.Marshal(map[string]any{"schema": "OMM.fbs", "providerId": "publication-e2e", "sourceName": source, "batchId": "failed", "announcementSchemas": []string{"not a schema"}})
 	status, answer := postStatus(t, d, "POST", "/api/v1/admin/dataset-updates/publish", bad)
 	t.Logf("the failed publication answered HTTP %d: %s", status, answer)
-	alert := awaitPublicationAlert(t, d, lane, `batch \"failed\" is unpublished: 3 of its 3 records are in no completed publication of the lane`, time.Minute)
+	alert := awaitPublicationAlert(t, d, lane, `batch \"failed\" is unpublished: no publication of the whole batch completed; it holds 3 records`, time.Minute)
 	t.Logf("alert after the failure: %s", alert)
 
 	for _, head := range []struct {

@@ -334,13 +334,14 @@ provider.
 A failed publication of the node's own data raises a `publication_failed`
 alert (`GET /api/v1/status/alerts`, `/api/v1/health` `degraded`) whose subject
 is the lane (`<schema> <provider>/<source>`) and whose `last_error` names each
-failed batch and how many of its records no completed publication carries. A
-completed publication is one whose every window was announced and whose
-completion was recorded; what a publication that failed partway left counts
-for nothing. The count is made from the store after each failure and each
-completed publication of a whole batch or lane; the alert clears when it
-reaches zero (a later run's publication carries the records again, the batch
-itself is published whole, or the batch holds no records any more). The
+failed batch and whether a completed publication of the whole batch exported
+what it holds. A completed publication is one whose every window was
+announced and whose completion was recorded; what a publication that failed
+partway left counts for nothing. A failed batch clears only through itself:
+a completed publication of the whole batch that exported the set it holds
+now, or the batch holding no records any more (superseded, expired, or the
+lane retracted). A publication of another batch never clears it, even one
+that carries every record of it; publishing the failed batch whole does. The
 failed scopes are kept in the store, so a restart raises the alert again; see
 `sdn-server/docs/operations-alerts.md`.
 

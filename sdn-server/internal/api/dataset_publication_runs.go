@@ -25,8 +25,8 @@ package api
 //
 // Every publication that fails is logged as an error naming its lane, batch
 // and step, and raises the publication_failed alert of its lane, which names
-// each failed scope and, for a failed batch, how many of its records no
-// completed publication of the lane exported. When the alert clears is
+// each failed scope and, for a failed batch, whether a completed publication
+// of the whole batch exported what it holds. When the alert clears is
 // decided from the store (dataset_publication_alert.go).
 
 import (
@@ -365,7 +365,7 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 	if err != nil {
 		log.Errorf("Dataset publication FAILED: %s batch %q, step %q, after %s: %v", lane, batch, publicationStepOf(err), took, err)
 		text := fmt.Sprintf("dataset publication %s batch %q failed at step %q after %s: %v", lane, batch, publicationStepOf(err), took, err)
-		s.failPublication(req, lane, s.runs.readStamp(run), text)
+		s.failPublication(req, lane, s.runs.readStamp(run), publicationStepOf(err), text)
 		return
 	}
 	records, manifest := 0, ""

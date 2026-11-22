@@ -552,6 +552,7 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 	if err != nil {
 		return nil, err
 	}
+	heldPublicationCompletion(datasetPublicationLaneName(activeReq), activeReq.BatchID)
 	if err := injectedPublicationFault(ctx, "record completion"); err != nil {
 		return nil, atPublicationStep("record completion", err)
 	}

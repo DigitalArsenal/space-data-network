@@ -276,17 +276,18 @@ func TestPublicationManualRunOutlivesClientRealDaemons(t *testing.T) {
 	}
 }
 
-// TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons runs the
+// TestPublicationAlertStaysWhenLaterRunsCarryItRealDaemons runs the
 // CelesTrak GP ingest flow three times, as its schedule does (host-02,
 // 2026-11-18: a run's publication failed, later runs ended ok, and the alert
 // stayed until a restart). The first run's publication fails and raises the
 // lane's publication_failed alert. The second run's pull returns one of the
-// first batch's two records: its batch is published, the other record is in
-// no publication, and the alert stays, saying so. The third run's pull
-// returns both records again (in another order, so another batch): every
-// record of the failed batch is now in a completed publication, and the
-// alert clears.
-func TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons(t *testing.T) {
+// first batch's two records, the third both (in another order, so another
+// batch); each run publishes a batch of its own. A publication of another
+// batch never clears the failed batch, so the alert stays after both runs
+// (it cleared here after the third, when another batch carrying every
+// record of the failed batch counted). A publication of the failed batch
+// whole, the alert's remedy, clears it.
+func TestPublicationAlertStaysWhenLaterRunsCarryItRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
 	}
@@ -326,7 +327,8 @@ func TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons(t *testing.T) {
 		t.Fatalf("the failure names no batch and export step: %s", failed)
 	}
 	batch := match[1]
-	alert := awaitPublicationAlert(t, d, gpFlowLane, `batch \"`+batch+`\" is unpublished: 2 of its 2 records are in no completed publication of the lane`, time.Minute)
+	unpublished := `batch \"` + batch + `\" is unpublished: no publication of the whole batch completed; it holds 2 records`
+	alert := awaitPublicationAlert(t, d, gpFlowLane, unpublished, time.Minute)
 	t.Logf("alert after the failed run: %s", alert)
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
@@ -359,13 +361,19 @@ func TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons(t *testing.T) {
 	// The second pull returns one of the failed batch's records.
 	phase.Store(1)
 	manualRun(2)
-	alert = awaitPublicationAlert(t, d, gpFlowLane, `after the publication of batch \"`+strings.SplitN(publicationLogAfter(t, d, `Dataset publication `+gpFlowLane+` batch "`), `"`, 2)[0]+`\", batch \"`+batch+`\" is unpublished: 1 of its 2 records are in no completed publication of the lane`, time.Minute)
+	alert = alertStays(t, d, gpFlowLane, unpublished, 10*time.Second)
 	t.Logf("alert after the second run: %s", alert)
 
 	// The third pull returns both.
 	phase.Store(2)
 	manualRun(3)
+	alert = alertStays(t, d, gpFlowLane, unpublished, 10*time.Second)
+	t.Logf("alert after the third run: %s", alert)
+
+	// The failed batch whole.
+	body, _ := json.Marshal(map[string]any{"schema": "OMM.fbs", "providerId": "publication-e2e", "sourceName": "celestrak-gp", "batchId": batch})
+	raw := d.request(t, "POST", "/api/v1/admin/dataset-updates/publish", "application/json", body, http.StatusAccepted)
+	t.Logf("the publication of the whole failed batch: %s", raw)
 	awaitPublicationAlertCleared(t, d, gpFlowLane, time.Minute)
-	cleared := publicationLogAfter(t, d, `every record of failed batch "`+batch+`"`)
-	t.Logf("cleared: every record of failed batch %q%s", batch, cleared)
+	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "`+batch+`" is published`))
 }

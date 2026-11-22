@@ -120,14 +120,14 @@ and the flow's run ends with an error. A publication of another batch of the
 lane and an announcement of its existing publications complete and leave the
 alert raised; a publication of the failed batch clears it.
 
-`TestPublicationAlertClearsWhenLaterRunsPublishItRealDaemons` runs the same
+`TestPublicationAlertStaysWhenLaterRunsCarryItRealDaemons` runs the same
 flow three times, as its schedule does. The first run's publication fails
-(the same blocked shard directory) and the alert says the failed batch's two
-records are in no completed publication. The second run's pull returns one
-of the two records: its own batch is published, and the alert stays, saying
-one record is still unpublished. The third run's pull returns both records
-again (in another order, so another batch): every record of the failed batch
-is in a completed publication, and the alert clears.
+(the same blocked shard directory) and the alert says no publication of the
+whole failed batch (two records) completed. The second run's pull returns
+one of the two records, the third both (in another order, so another batch);
+each run publishes a batch of its own, and the alert stays after both: a
+publication of another batch never clears a failed batch. A publication of
+the failed batch whole clears it.
 
 `TestPublicationManualRunOutlivesClientRealDaemons` runs the same flow by
 hand on a node whose GP origin answers after 20 s, so every run lasts longer
@@ -160,48 +160,73 @@ publication, one record per window, after it wrote publication rows:
 `SDN_E2E_PUBLICATION_FAULT=announce@2` fails the second window's
 announcement, `SDN_E2E_PUBLICATION_FAULT="record completion"` fails the
 recording of the completion after every window was announced (the fault
-fires once per process). The alert says all three records are unpublished.
-A publication of a batch carrying one of them leaves the alert saying two
-are, and retention lists no series made of the failed publication's rows; a
-publication of a batch carrying all three clears the alert.
+fires once per process). The alert says no publication of the whole batch
+completed. A publication of a batch carrying one of them leaves the alert as
+it was, and retention lists no series made of the failed publication's rows.
+A second batch with the same three records fails at its first announcement.
+A publication of a batch carrying all three completes and both failed
+batches stay; a publication of each of them whole clears the alert.
 
 `TestPublicationAlertBatchGainedRecordsRealDaemons` publishes a batch of two
 records, stores a third in it, and fails its republication at the third
 window's announcement (`SDN_E2E_PUBLICATION_FAULT=announce@3`); a second
-batch holding the third record fails too. The alert counts all three
-records of the first batch and the one of the second unpublished: the
-completed publication of the first batch exported two records, and the
-batch holds three. An announcement of the batch's existing publications
-announces the completed publication's window only. The publication of an
-unrelated batch leaves the alert with the same counts. The publication of a
-batch holding the first two records leaves it saying, once the count that
-publication prompts ran, that one of the three records of the first batch is
-unpublished; a publication of the whole first batch clears it.
+batch holding the third record fails too. The alert says one of the three
+records of the first batch arrived after its last completed publication,
+and that no publication of the whole second batch completed. An
+announcement of the batch's existing publications announces the completed
+publication's window only. The publications of an unrelated batch and of a
+batch holding the first two records leave the alert as it was. A
+publication of the whole first batch removes it from the alert, which stays
+naming the second batch (the first batch holds its record, but is another
+batch); a publication of the whole second batch clears it.
 
 `TestPublicationAlertGainedAfterFailureRealDaemons` stores two records in a
 batch and fails its publication, stores a third record in it and fails its
 publication again, and publishes another batch holding the first two
-records: the alert stays, saying one of the batch's three records is
-unpublished (it cleared here when the batch was counted at its first failure
-only and the other batch covered what that count found). A publication
-of the whole batch clears it.
+records: the alert stays, saying no publication of the whole batch (three
+records) completed. A publication of the whole batch clears it, and the
+check after it finds the batch published as it is.
 
 `TestPublicationAlertRestartRealDaemons` fails a batch's publication and
-restarts the node: the alert is raised again at start and counts the batch's
-records. A publication of the whole batch clears it, and the node restarted
-again raises no alert.
+restarts the node: the alert is raised again at start, and the batch is
+checked once the node answers ready. A publication of the whole batch
+clears it, and the node restarted again raises no alert.
 
 `TestPublicationAlertSupersededBatchRealDaemons` fails a batch's publication
-on a replace-current node, stores a batch of other records, supersedes the
-lane by it (`POST /api/v1/admin/store/supersede`, the store's replace-current
-eviction) and publishes it: the failed batch holds no records any more, and
-the alert clears, the log saying so.
+on a replace-current node, stores a batch of other records and supersedes
+the lane by it (`POST /api/v1/admin/store/supersede`, the store's
+replace-current eviction): the supersede prompts a check of the failed
+batch, which holds no records any more, and the alert clears, the log
+saying so, before any publication of the lane.
 
 `TestPublicationAlertFailureDuringClearRealDaemons` holds the clearing of an
 alert for 20 s after it was decided
-(`SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD=20s`), and fails another batch's
-publication meanwhile: after the hold the alert is active and names that
-batch.
+(`SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD=20s`) by the publication of the whole
+failed batch, and fails another batch's publication meanwhile: after the
+hold the alert is active and names that batch.
+
+`TestPublicationAlertOtherBatchNoCreditRealDaemons` fails a batch of two
+records and publishes another batch holding both: the alert stays. A
+publication of the whole failed batch clears it.
+
+`TestPublicationAlertRecordsDuringPublicationRealDaemons` holds a
+publication of the whole failed batch for 15 s after it exported its set
+(`SDN_E2E_PUBLICATION_COMPLETION_HOLD=15s`) and stores a third record in the
+batch meanwhile. The completed publication removes the batch from the alert
+when it is reported; the check after it finds the batch holds a record that
+publication did not export, and the alert is raised again, saying 1 of its 3
+records arrived after its last completed publication. A publication of the
+batch as it is now clears it.
+
+`TestPublicationAlertRetractedLaneRealDaemons` fails a batch's publication
+and a publication of the lane's newest records, then retracts the lane
+(`POST /api/v1/admin/dataset-updates/retract?apply=true`): both failed
+scopes go at the retraction, the alert is clear when the retraction
+answers, and the restarted node raises nothing.
+
+`TestPublicationAlertCheckCostRealDaemons` publishes 50 batches that each
+hold a record R, then fails a batch holding R: the node's log names one
+fingerprint for the check, of the failed batch itself, and none of the 50.
 
 `TestPublicationAlertHeadPublicationRealDaemons` fails a three-record batch's
 publication, then publishes a head of that batch (`limit: 1`) and a head of

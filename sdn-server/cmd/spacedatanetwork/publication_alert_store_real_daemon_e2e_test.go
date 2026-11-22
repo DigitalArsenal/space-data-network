@@ -36,11 +36,10 @@ func awaitLogCount(t *testing.T, d *publicationDaemon, marker string, n int, bud
 // TestPublicationAlertGainedAfterFailureRealDaemons stores part one of batch
 // "x" (two records) and fails its publication; stores part two (a third
 // record) and fails its publication again; then publishes batch "y", which
-// holds both records of part one. The third record is in no publication,
-// so the alert stays and says one of the three records of "x" is
-// unpublished (it cleared here when "x" was counted once, at its first
-// failure, and "y" covered what that count found). A publication of the
-// whole of "x" clears it.
+// holds both records of part one. A publication of another batch never
+// clears "x": the alert stays and still says no publication of the whole of
+// "x", which holds three records, completed. A publication of the whole of
+// "x" clears it, and the check of "x" after it finds "x" published as it is.
 func TestPublicationAlertGainedAfterFailureRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -53,16 +52,17 @@ func TestPublicationAlertGainedAfterFailureRealDaemons(t *testing.T) {
 
 	d.ingestOMMFrames(t, source, "x", 0, frames[:2])
 	failBatchPublication(t, d, source, "x", 1)
-	t.Logf("alert after the first failure: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: 2 of its 2 records are in no completed publication of the lane`, time.Minute))
+	t.Logf("alert after the first failure: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 2 records`, time.Minute))
 
 	d.ingestOMMFrames(t, source, "x", 0, frames[2:])
 	failBatchPublication(t, d, source, "x", 2)
+	t.Logf("alert after the second failure: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 3 records`, time.Minute))
 
 	d.ingestOMMFrames(t, source, "y", 0, frames[:2])
 	if pub := d.publish(t, "OMM.fbs", source, "y"); pub.RecordCount != 2 {
 		t.Fatalf("the publication of \"y\" answered %d records", pub.RecordCount)
 	}
-	alert := awaitAlertAfter(t, d, lane, `after the publication of batch \"y\", batch \"x\" is unpublished: 1 of its 3 records are in no completed publication of the lane`, time.Minute)
+	alert := alertStays(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 3 records`, 10*time.Second)
 	t.Logf("alert after the publication of \"y\": %s", alert)
 
 	if pub := d.publish(t, "OMM.fbs", source, "x"); pub.RecordCount != 3 {
@@ -70,6 +70,10 @@ func TestPublicationAlertGainedAfterFailureRealDaemons(t *testing.T) {
 	}
 	awaitPublicationAlertCleared(t, d, lane, time.Minute)
 	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "x" is published`))
+	t.Logf("checked: %s", publicationAwaitLog(t, d, `Dataset publication `+lane+`: batch "x" is published as it is now`, time.Minute))
+	if alert := publicationAlert(t, d, lane); alert != "" {
+		t.Fatalf("the alert is raised again after the check of \"x\": %s", alert)
+	}
 }
 
 // TestPublicationAlertRestartRealDaemons fails a batch's publication and
@@ -87,7 +91,7 @@ func TestPublicationAlertRestartRealDaemons(t *testing.T) {
 	lane := "OMM.fbs publication-e2e/" + source
 	d.ingestOMMFrames(t, source, "x", 0, [][]byte{baselineOMM(0), baselineOMM(1)})
 	failBatchPublication(t, d, source, "x", 1)
-	t.Logf("alert before the restart: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: 2 of its 2 records are in no completed publication of the lane`, time.Minute))
+	t.Logf("alert before the restart: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 2 records`, time.Minute))
 
 	d.stop(t)
 	d.start(t)
@@ -96,12 +100,17 @@ func TestPublicationAlertRestartRealDaemons(t *testing.T) {
 	if alert == "" {
 		t.Fatalf("the restarted node raised no publication_failed alert of %s", lane)
 	}
-	t.Logf("alert after the count: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: 2 of its 2 records are in no completed publication of the lane`, time.Minute))
+	// The check of "x" waits for the node to answer ready.
+	t.Logf("checks at start: %s", publicationAwaitLog(t, d, `Dataset publications: the node is ready; checking `, time.Minute))
+	t.Logf("alert after the check: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 2 records`, time.Minute))
 
 	if pub := d.publish(t, "OMM.fbs", source, "x"); pub.RecordCount != 2 {
 		t.Fatalf("the publication of the whole of \"x\" answered %d records", pub.RecordCount)
 	}
 	awaitPublicationAlertCleared(t, d, lane, time.Minute)
+	// The failed scope's row goes once the check after the publication
+	// confirmed it.
+	t.Logf("checked: %s", publicationAwaitLog(t, d, `Dataset publication `+lane+`: batch "x" is published as it is now`, time.Minute))
 
 	d.stop(t)
 	d.start(t)
@@ -112,11 +121,13 @@ func TestPublicationAlertRestartRealDaemons(t *testing.T) {
 
 // TestPublicationAlertSupersededBatchRealDaemons fails a batch's publication
 // on a replace-current node, stores a batch of other records (a pull whose
-// element sets replaced the failed batch's), supersedes the lane by that
+// element sets replaced the failed batch's) and supersedes the lane by that
 // batch (the store's replace-current eviction, POST
-// /api/v1/admin/store/supersede) and publishes it: the failed batch holds no
-// records any more, and the alert clears, saying so (it stayed here: none of
-// the failed batch's records was in the published batch).
+// /api/v1/admin/store/supersede): the supersede prompts a check of the
+// failed batch, which holds no records any more, and the alert clears,
+// saying so, before any publication of the lane (it stayed here: none of the
+// failed batch's records was in the batch published after). The publication
+// of the kept batch then completes and raises nothing.
 func TestPublicationAlertSupersededBatchRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -127,7 +138,7 @@ func TestPublicationAlertSupersededBatchRealDaemons(t *testing.T) {
 	lane := "OMM.fbs publication-e2e/" + source
 	d.ingestOMMFrames(t, source, "x", 0, [][]byte{baselineOMM(0), baselineOMM(1)})
 	failBatchPublication(t, d, source, "x", 1)
-	t.Logf("alert after the failure: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: 2 of its 2 records are in no completed publication of the lane`, time.Minute))
+	t.Logf("alert after the failure: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 2 records`, time.Minute))
 
 	d.ingestOMMFrames(t, source, "y", 0, [][]byte{baselineOMM(2), baselineOMM(3)})
 	body, _ := json.Marshal(map[string]any{"schema": "OMM.fbs", "provider_id": "publication-e2e", "source_name": source, "keep_batch": "y"})
@@ -136,20 +147,23 @@ func TestPublicationAlertSupersededBatchRealDaemons(t *testing.T) {
 	if left := d.scanBatch(t, "OMM.fbs", source, "x"); len(left) != 0 {
 		t.Fatalf("batch \"x\" holds %d records after the supersede", len(left))
 	}
+	awaitPublicationAlertCleared(t, d, lane, time.Minute)
+	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed batch "x" holds no records any more`))
 
 	if pub := d.publish(t, "OMM.fbs", source, "y"); pub.RecordCount != 2 {
 		t.Fatalf("the publication of \"y\" answered %d records", pub.RecordCount)
 	}
-	awaitPublicationAlertCleared(t, d, lane, time.Minute)
-	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed batch "x" holds no records any more`))
+	if alert := publicationAlert(t, d, lane); alert != "" {
+		t.Fatalf("the publication of \"y\" raised the alert: %s", alert)
+	}
 }
 
 // TestPublicationAlertFailureDuringClearRealDaemons fails batch "x", then
-// publishes batch "y" holding its record, on a node that holds the alert's
-// clearing for 20 s after it is decided
-// (SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD). While the clearing is held, the
-// publication of batch "w" fails. After the hold the alert is active and
-// names "w": the clear of "x" did not take the failure of "w" with it.
+// publishes the whole of "x", on a node that holds the alert's clearing for
+// 20 s after it is decided (SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD). While the
+// clearing is held, the publication of batch "w" fails. After the hold the
+// alert is active and names "w": the clear of "x" did not take the failure
+// of "w" with it.
 func TestPublicationAlertFailureDuringClearRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -165,13 +179,23 @@ func TestPublicationAlertFailureDuringClearRealDaemons(t *testing.T) {
 	frames := [][]byte{baselineOMM(0), baselineOMM(1)}
 	d.ingestOMMFrames(t, source, "x", 0, frames[:1])
 	failBatchPublication(t, d, source, "x", 1)
-	awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: 1 of its 1 records are in no completed publication of the lane`, time.Minute)
+	awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 1 record`, time.Minute)
 
-	d.ingestOMMFrames(t, source, "y", 0, frames[:1])
 	d.ingestOMMFrames(t, source, "w", 0, frames[1:])
-	if pub := d.publish(t, "OMM.fbs", source, "y"); pub.RecordCount != 1 {
-		t.Fatalf("the publication of \"y\" answered %d records", pub.RecordCount)
-	}
+	// The whole of "x": its report clears the alert before the publication
+	// is answered, so the request is answered after the hold.
+	answered := make(chan string, 1)
+	go func() {
+		body, _ := json.Marshal(map[string]any{"schema": "OMM.fbs", "providerId": "publication-e2e", "sourceName": source, "batchId": "x"})
+		client := http.Client{Timeout: 5 * time.Minute}
+		res, err := client.Post(d.base+"/api/v1/admin/dataset-updates/publish", "application/json", strings.NewReader(string(body)))
+		if err != nil {
+			answered <- err.Error()
+			return
+		}
+		res.Body.Close()
+		answered <- res.Status
+	}()
 	publicationAwaitLog(t, d, "SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD: the clearing of the publication_failed alert of "+lane+" is held", time.Minute)
 	held := time.Now()
 	failBatchPublication(t, d, source, "w", 1)
@@ -186,5 +210,11 @@ func TestPublicationAlertFailureDuringClearRealDaemons(t *testing.T) {
 	}
 	if strings.Contains(alert, `batch \"x\"`) {
 		t.Fatalf("the alert still names batch \"x\", whose record is published: %s", alert)
+	}
+	select {
+	case status := <-answered:
+		t.Logf("the publication of the whole of \"x\" answered: %s", status)
+	case <-time.After(time.Minute):
+		t.Fatal("the publication of the whole of \"x\" was not answered within a minute of the hold")
 	}
 }
