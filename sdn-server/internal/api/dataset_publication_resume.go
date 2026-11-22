@@ -512,7 +512,6 @@ func (s *ConcreteDatasetPublicationService) clearSupersededReport(req DatasetPub
 // published as it is now, or holds no records.
 func (s *ConcreteDatasetPublicationService) dropMark(req DatasetPublicationRequest, reason string, superseded, reported bool) {
 	lane, batch := datasetPublicationLaneName(req), strings.TrimSpace(req.BatchID)
-	s.runs.unmark(req)
 	cleared := ""
 	if superseded {
 		if s.clearSupersededReport(req, lane) {
@@ -521,6 +520,10 @@ func (s *ConcreteDatasetPublicationService) dropMark(req DatasetPublicationReque
 	} else if reported {
 		cleared = "; its report as interrupted stays until a check of the batch finds it published"
 	}
+	// The mark goes after the report's stored row: a crash between the two
+	// leaves the mark, and the next start drops it again and clears the row.
+	// The other order left a stored report of a batch nothing publishes.
+	s.runs.unmark(req)
 	if superseded {
 		log.Warnf("Dataset publication %s batch %q is NOT published again: %s. Its mark is removed%s", lane, batch, reason, cleared)
 	} else {

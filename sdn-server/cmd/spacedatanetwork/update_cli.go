@@ -999,9 +999,6 @@ func declaresRollback(m *update.Manifest) bool {
 	return m.Provenance != nil && m.Provenance.Lineage == update.LineageRollback
 }
 
-// stopServingDaemon asks the daemon to shut down and waits for its pid to
-// exit (update.StopLadder). It returns an error, with nothing swapped, when
-// the daemon answered but would not stop, or did not exit through every rung.
 // maxPublicationStopWait bounds what the daemon's handshake answer
 // (waitBeforeStopSeconds) adds to the graceful-stop grace. The daemon sends
 // its publication wait, 30 minutes; a larger value is a daemon bug, and the
@@ -1021,6 +1018,9 @@ func publicationStopWait(seconds int64) (wait time.Duration, clamped bool) {
 	return time.Duration(seconds) * time.Second, false
 }
 
+// stopServingDaemon asks the daemon to shut down and waits for its pid to
+// exit (update.StopLadder). It returns an error, with nothing swapped, when
+// the daemon answered but would not stop, or did not exit through every rung.
 func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version string) (servingDaemon, error) {
 	var daemon servingDaemon
 	if strings.TrimSpace(o.AdminURL) == "" || strings.TrimSpace(o.Token) == "" {
