@@ -44,6 +44,13 @@ var bondAttestationWasm []byte
 const bondRefreshInterval = 15 * time.Minute
 const bondRetryInterval = 10 * time.Second
 
+// bondRetryMaxInterval caps the growing wait between refreshes that end
+// unattested. Without it a node with no bond (the normal case for a new or
+// local node) reloaded the module and queried the public chain and price
+// services every 10 seconds for ever: on a machine running 18 local nodes that
+// was a steady load and a steady stream of requests to rate-limited services.
+const bondRetryMaxInterval = time.Hour
+
 // bondInitialDelay lets the node finish its boot replay before the first
 // outbound attestation runs.
 const bondInitialDelay = 5 * time.Second
@@ -325,14 +332,21 @@ func (b *bondAttestor) start(ctx context.Context, n *node.Node) {
 			return
 		case <-time.After(bondInitialDelay):
 		}
+		retry := bondRetryInterval
 		for {
 			b.refresh(ctx, n)
 			b.mu.RLock()
 			complete := bondComplete(b.latest)
 			b.mu.RUnlock()
 			delay := bondRefreshInterval
-			if !complete {
-				delay = bondRetryInterval
+			if complete {
+				retry = bondRetryInterval
+			} else {
+				// An incomplete or unattested answer is retried soon at first (a
+				// transient chain-API failure clears quickly), then ever more
+				// slowly: 10 s, 20 s, 40 s ... up to an hour.
+				delay = retry
+				retry = min(2*retry, bondRetryMaxInterval)
 			}
 			timer := time.NewTimer(delay)
 			select {

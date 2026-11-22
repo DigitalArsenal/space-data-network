@@ -61,6 +61,9 @@ func (s *storageCapAdapter) indexPageWithReader(payload []byte, reader indexPage
 	if encfield.HasEncryptedFields(table) {
 		return refuseCapJSON("storage.index_page", "field-sealed schemas are excluded from storage queries")
 	}
+	if req.FROM_EPOCH_MS() != 0 || req.TO_EPOCH_MS() != 0 {
+		return s.indexWindowPage(req, schema)
+	}
 	// These fields belong to other query operations; ignoring them would broaden a read.
 	if req.SQL() != nil || req.SEARCH() != nil || req.FILTERSLength() != 0 || req.PARAMETERSLength() != 0 ||
 		req.TIME_PROFILE() != 0 || req.FROM_EPOCH_MS() != 0 || req.TO_EPOCH_MS() != 0 || req.PAGE() > 1 ||
@@ -95,7 +98,7 @@ func (s *storageCapAdapter) indexPageWithReader(payload []byte, reader indexPage
 		if e != nil || !ok || cursor.MaxRowID <= 0 || cursor.QueryHash != hash {
 			return errCapJSON("cursor is not a NEXT_CURSOR of this index query; restart from the first page")
 		}
-		q.AfterSeq, q.ThroughSeq = cursor.AfterRowID, cursor.MaxRowID
+		q.AfterSeq, q.ThroughSeq, q.KnownTotal = cursor.AfterRowID, cursor.MaxRowID, cursor.TotalCount
 	}
 	if s.store == nil {
 		return errCapJSON("storage unavailable")
@@ -108,7 +111,7 @@ func (s *storageCapAdapter) indexPageWithReader(payload []byte, reader indexPage
 		return errCapJSON("index page failed: " + err.Error())
 	}
 	encode := func(after int64) string {
-		return datasync.EncodeRawRecordCursor(after, page.Through, "index-"+strconv.FormatInt(page.Through, 10), hash)
+		return datasync.EncodeRawRecordCursorTotal(after, page.Through, page.Total, "index-"+strconv.FormatInt(page.Through, 10), hash)
 	}
 	header := func(count int, after int64, more bool) []byte {
 		next := ""

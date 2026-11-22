@@ -37,6 +37,11 @@ the node's root key, as `apps run` does. `--json` prints JSON.
 spacedatanetwork sync subscribe --schema OMM --provider-id space-data-network-02 \
   --source-name celestrak-gp --from <producer peer id>
 
+# also keep the lane's publications (a gateway host); on a followed lane it
+# changes only that
+spacedatanetwork sync subscribe --schema OMM --provider-id space-data-network-02 \
+  --source-name celestrak-gp --from <producer peer id> --publications keep
+
 # the lanes this node follows
 spacedatanetwork sync subscriptions
 
@@ -150,6 +155,32 @@ time. The 5 minutes count from the lane's start: a catch-up runs when they
 end, whatever else ran it in between, so a lane whose stream never connects
 imports its waiting publication 5 minutes after it starts.
 
+So a followed lane's node holds its records but not its publications' files
+(the producer's signed manifests, shards and indexes). A node whose readers
+fetch those files from it, such as a gateway host that serves a producer's
+publications to browsers over Bitswap, subscribes with `sync subscribe
+--publications keep`: each publication of the lane is then also fetched and
+imported, as 1.1.9 imported every publication, and the lane's retention rule
+decides which publications stay (`replace-current` keeps the current
+batch's). On a lane already followed, `--publications keep` (or `stream`)
+changes only that; the stream and its cursor stay. Turned on for a running
+lane, the stored-`$PNM` catch-up runs at once and reads the publications it
+had passed over. `sync subscriptions` shows such a lane with "publications:
+kept" (`keep_publications` in `--json`).
+
+A node that has imported a lane's publications also lists them (`list-published`) and serves their files (`read-shard`, `read-index`). Each row is listed `available` while its shard and index are on the node's disk. Lane retention removes the files of the batches it no longer keeps as current. When a file is gone but the node's IPFS repository still holds that content in full, with every block of its DAG local and a shard of the published size, the row is still listed `available`, and both reads serve the bytes from the repository. A Bitswap reader that falls back to the publication before the newest then finds it, for as long as the node holds it, whether that is because of a pin or because the repository collects no garbage. A row that is neither on disk nor fully in the repository is listed `unavailable` (`shard_missing` or `index_missing`). After 24 hours it is retired from the listing.
+
+A node with its DHT off (`peers.enable_dht: false`) has no content routing,
+and Kubo's Bitswap asks for a block only the peers that served it blocks
+before, its LAN peers and its peered peers (broadcast control, on since Kubo
+0.37). A producer it is merely connected to is never asked, so its fetches by
+content address (a kept publication's shard) and its gateway's would time
+out. Such a node therefore adds each producer it follows a lane from to
+Kubo's peering service when the followed stream opens, which keeps the
+connection and makes Bitswap ask it, and removes it when no lane is followed
+from that producer. A producer in the Kubo repository's `Peering.Peers` is
+left as it is. `swarm/peering/ls` on the node's Kubo API lists them.
+
 A producer serves a peer it does not list as trusted at most 8 followed
 streams (one per lane), and all such peers together 64; a peer it lists as
 trusted gets 16, outside those 64. A node that follows more than 8 lanes of
@@ -166,8 +197,10 @@ serves its stream but not its current batch.
 `subscriptions.dss`, in the directory that holds `storage.path` (beside it, not in it; where 1.1.9 keeps `follows.dss`): one size-prefixed `$DSS` record per lane,
 with the producer (`PROVIDER_PEER_ID`), the cursor to resume at (`CURSOR`),
 where it starts (`SYNC_FILTER` `start=current` or `start=beginning`, with
-`unread=<time>` while a refused cursor's gap is not acknowledged, and
-`subscribed=beginning` for a lane so started), when it
+`unread=<time>` while a refused cursor's gap is not acknowledged,
+`subscribed=beginning` for a lane so started, and `publications=keep` for a
+lane that keeps its publications, which a build before 1.1.11 does not know
+and so holds without running), when it
 was subscribed (`LAST_SYNC_STARTED_AT`) and what has been received. The cursor
 is saved only after the store has taken a page, so a restart resumes with
 nothing lost; a record sent again is the same content address and is stored
@@ -254,6 +287,7 @@ them. A new node (an empty storage path) whose config carries
 |---|---|---|
 | `POST /api/v1/sync[?start=current\|beginning][&force=1]` | admin | one size-prefixed `$DSS`, `REQUESTED_ACTION` Subscribe with `PROVIDER_PEER_ID`: subscribe (202), or 409 `first_read_refused`, 400 for a producer that is not trusted; a `RETENTION` in the frame decides the default start and is set on the lane only when the subscription is made |
 | `POST /api/v1/sync?acknowledge_unread=1` | admin | Subscribe naming an existing subscription: clears what a refused cursor left unread on it (`sync subscribe --acknowledge-unread`) |
+| `POST /api/v1/sync?publications=keep\|stream` | admin | Subscribe that keeps (or stops keeping) the lane's publications; naming an existing subscription, it changes only that (`sync subscribe --publications`) |
 | `POST /api/v1/sync` | admin | Unsubscribe, with or without `PROVIDER_PEER_ID` |
 | `GET /api/v1/sync/plan?schema=&provider_id=&source=&from=[&start=]` | admin | the first read, as JSON, without subscribing |
 | `GET /api/v1/sync/subscriptions` | admin | the followed lanes, as JSON |

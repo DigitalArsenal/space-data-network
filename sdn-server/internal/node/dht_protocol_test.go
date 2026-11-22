@@ -72,7 +72,9 @@ func TestNodeDHTModes(t *testing.T) {
 	if mode := startTestKubo(t, dhtParticipationServer).WANDHT().Mode(); mode != dht.ModeServer {
 		t.Fatalf("server participation runs the public DHT in mode %v, want server", mode)
 	}
-	if mode := startTestKubo(t, dhtParticipationOff).WANDHT().Mode(); mode != dht.ModeClient {
-		t.Fatalf("peers.enable_dht: false runs the public DHT in mode %v, want client", mode)
+	// Off is no DHT at all: a client with no bootstrap peers still learned the
+	// public DHT through a peer that serves it (stack, 2026-11-21).
+	if d := startTestKubo(t, dhtParticipationOff).WANDHT(); d != nil {
+		t.Fatalf("peers.enable_dht: false runs the public DHT in mode %v, want none", d.Mode())
 	}
 }

@@ -129,8 +129,8 @@ func TestPublicationReclamationThirtyDays(t *testing.T) {
 	if a != b || n != 2000 || m != n {
 		t.Fatal("last index differs from fresh snapshot")
 	}
-	a, n = snap.Products.Fingerprint()
-	b, m = want.Products.Fingerprint()
+	a, n = snap.Products[0].Fingerprint()
+	b, m = want.Products[0].Fingerprint()
 	if a != b || n != 2000 || m != n {
 		t.Fatal("last products differ from fresh snapshot")
 	}
@@ -174,7 +174,7 @@ func TestPublicationReclamationPinsAndCrash(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer snap.Close()
-			if _, err = snap.Products.Record(0); err != nil {
+			if _, err = snap.Products[0].Record(0); err != nil {
 				t.Fatal(err)
 			}
 			if len(s.RetainedPublicationBatches()) != 0 {

@@ -126,6 +126,27 @@ copies in `testdata/` feed the tests (`TestStaticBuildCarriesTheRuntimePatches`)
   The type list is read without the lock (it is fixed once the module is
   instantiated, as the table list already is), and a function of the calling
   module with the expected type index matches without the matcher (~5 ns).
+- `08-async-detached-thread`: `Async` (every call with a deadline, every WASI
+  thread spawn) starts its thread detached on POSIX instead of starting it
+  joinable and calling `pthread_detach`. In glibc through at least 2.42
+  (sourceware bug 19951, fixed on glibc master, December 2025)
+  `pthread_detach` marks the thread detached and then reads the thread's
+  descriptor, which lives in the thread's stack; if the thread exits in
+  between and its stack is unmapped, the read faults. Engine CI died there
+  (`__pthread_detach+32`, stack issue 876).
+- `09-lld-single-thread`: the AOT compiler's ELF link runs lld with
+  `--threads=1`. The link's output file already exists (the object bytes are
+  written to it first), and with more threads lld removes it through
+  `lld::unlinkAsync`, which starts a thread and detaches it: the same race,
+  once per AOT compile on Linux. macOS (Mach-O) and Windows (COFF) links do
+  not call `unlinkAsync`.
+- `10-series-marker`: exports `WasmEdge_SDNPatchSeries10()`. `patch_series.go`
+  calls it, so a binary linked against a runtime without patches 01 to 10
+  fails to link (`undefined reference to WasmEdge_SDNPatchSeries10`); the
+  substrate self-test reports it as `patch_series`. A build that has to link
+  an upstream runtime (CodeQL's Go build) uses the `wasmedge_unpatched` tag
+  and reports 0. The self-test has no check for 08 or 09; the series is how a
+  binary says it carries them.
 
 **The substrate probe** (`substrate/substrate-probe.wat`, embedded as
 `substrate-probe.wasm`) exercises 04 directly: `memarg_offset_notify` spawns a

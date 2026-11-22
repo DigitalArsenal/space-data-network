@@ -406,7 +406,7 @@ func TestCatalogSnapshotCutoffAndRetention(t *testing.T) {
 		}
 	}
 	pinned := newCatalogConsumer()
-	for _, p := range []*storage.PublicationSelection{snap.Products, snap.Index} {
+	for _, p := range []*storage.PublicationSelection{snap.Products[0], snap.Index} {
 		ex, err := s.ExportDatasetWindow(t.TempDir(), storage.IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, Selection: p})
 		if err != nil {
 			t.Fatal(err)
@@ -458,7 +458,7 @@ func TestCatalogSnapshotConcurrentReplacement(t *testing.T) {
 	exports := make(chan *storage.DatasetExport, 16)
 	go func() {
 		defer close(exports)
-		for _, p := range []*storage.PublicationSelection{snap.Products, snap.Index} {
+		for _, p := range []*storage.PublicationSelection{snap.Products[0], snap.Index} {
 			for offset := 0; offset < 32; offset += 7 {
 				ex, err := s.ExportDatasetWindow(dir, storage.IndexedRecordQuery{SchemaName: p.Schema, ProviderID: p.Provider, SourceName: p.Source, Selection: p, Offset: offset, Limit: 7})
 				if err != nil {

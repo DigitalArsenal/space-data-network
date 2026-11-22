@@ -15,16 +15,23 @@ journal again. Changed batch identities or export metadata require retention.
 Snapshots hold immutable file references and hydrate one record at a time into
 the shard writer. Readers copy the applied-entry index under a short lock;
 reference validation, hashing, and export run outside the ingestion lock. Limits
-are 100,000 journal entries, 100,000 records per selection, 64 MiB of accounted metadata
+are 100,000 journal entries, 100,000 records per selection, 400,000 product
+references per catalog closure (four per object), 64 MiB of accounted metadata
 per shard index, and 16 MiB per payload. Each retained source has
 `catalog_object_limit` (1 through 100,000; omitted or zero defaults to 100,000).
 Each source has a generation allowance of
 `min(100000, catalog_object_limit + ceil(catalog_object_limit / 4))`.
-The store reserves four generations per source: reference capacity is
-`4 * sum(generation_allowance)`, and accounted reference-byte capacity is
-`256 * reference_capacity + 1 MiB * retained_source_count`. A CAT/OCM pair
-configured for N objects reserves up to 10N references, capped at 800,000 for
-the pair. Lowering or removing a setting preserves the durable capacity and
+A CAT index with `catalog_product_source` also has a product allowance of four
+products per object, `4 * generation_allowance`: a row lists at most one product
+of each CAT product kind (SGP4 elements, SGP4-XP elements, state and covariance,
+SDN-AP elements). A generation admits up to its generation allowance of index
+records and its product allowance of product records, across all its product
+standards. The store reserves four generations per source: reference capacity is
+`4 * sum(generation_allowance + product_allowance)`, and accounted reference-byte capacity is
+`256 * reference_capacity + 1 MiB * retained_source_count`. A CAT index and one
+product source, both configured for N objects, reserve up to 30N references,
+capped at 2,400,000; each further product source adds up to 5N, capped at
+400,000. Lowering or removing a setting preserves the durable capacity and
 logs the configured capacity and retained use. Configuration validates the
 range at startup. The reference structure occupies 88 bytes; binary content
 digests, offsets, and lengths are inline, while paths and tags are shared per
@@ -38,9 +45,13 @@ The tag-lookup index uses one hash lookup per record. Each sequential call still
 requires a durable intent; prepared scope metadata contains only recovery identity,
 and its directory is synchronized once after both metadata files.
 
-Enable retention on empty CAT and OCM sources in store format 4. Existing
-unretained history cannot be reconstructed. Sealed standards are refused; CAT
-and OCM have no sealed fields. Provider and source identities must be exact.
+Enable retention on empty CAT and product sources in store format 4. The product
+standards are OCM, OMM and MOR: a catalog row's products are `$OCM` states and
+element sets, `$OMM` element sets and `$MOR` minimum orbit records (the catalog
+builder's minimum profile), each stored in its own standard under the
+provider and the source that `catalog_product_source` names. Existing unretained history cannot be
+reconstructed. Sealed standards are refused; CAT and the product standards have
+no sealed fields. Provider and source identities must be exact.
 Publication journal metadata uses size-prefixed, checksummed FlatBuffers defined
 in `internal/publicationstate/schema/PublicationState.fbs`. Recovery verifies the
 length, schema structure, type, version, and checksum before reading fields.
@@ -67,6 +78,13 @@ publishing:
       catalog_object_limit: 100000
       min_interval: 5m
       settle: 10s
+    - schema: OMM.fbs
+      provider_id: catalog-producer
+      source_name: catalog-products
+      retain_for_publication: true
+      catalog_object_limit: 100000
+      min_interval: 5m
+      settle: 10s
     - schema: CAT.fbs
       provider_id: catalog-producer
       source_name: catalog-index
@@ -83,9 +101,11 @@ publishing:
       min_interval: 24h
 ```
 
-`catalog_product_source` alone does not enable retention. Both participating
-sources require `retain_for_publication`. A retained OCM source requires its CAT
-index; standalone product retention is refused. A retained batch source enters deferred
+`catalog_product_source` alone does not enable retention. The CAT source and at
+least one product source require `retain_for_publication`; retain one product
+source for each standard the rows name (the example retains OCM and OMM). A
+retained product source requires its CAT index; standalone product retention is
+refused. A retained batch source enters deferred
 publication without a separate snapshot rule. Unconfigured sources retain their
 existing behavior, including the live CAT overwrite policy.
 
@@ -109,8 +129,9 @@ copy; if both copies are unusable, all retained sources are paused conservativel
 Ordinary sources remain available. Applied streams are also checksum-verified at
 startup. Only unreclaimed streams are read: startup work scales with their payload
 bytes plus reference metadata. Startup parses every kept CAT payload once to
-cache its product identifiers. At a paired 100,000-object capacity, 800,000
-records at the 16 MiB per-record limit imply a theoretical 12.5 TiB payload bound. The reference-metadata
+cache its product identifiers. At a paired 100,000-object capacity with one
+product source, 2,400,000 records at the 16 MiB per-record limit imply a
+theoretical 37.5 TiB payload bound. The reference-metadata
 limit can bind earlier. This is an I/O bound, not a measured startup duration.
 Orphan preparation and reclaimed directories and abandoned `.write-*` files are removed.
 Corrupt derived reclamation plans are rebuilt from independent allocation
@@ -143,12 +164,18 @@ generation remains selectable. The suffix has no special meaning on a retained C
 source without `catalog_product_source`.
 
 Selection uses the last CAT record for each catalog identity in journal order,
-then resolves exactly its referenced OCM payload or size-prefixed record CIDs.
+then resolves exactly its referenced product payload or size-prefixed record
+CIDs, each among the records of its own standard. A row can list several
+products of different standards, for example a GP OMM (`$OMM`), an SGP4-XP set
+and an SDN-AP record (`$OCM`); the CAT record travels unchanged, so
+their order, kinds and sources are what the producer wrote.
 `PRODUCTS_AS_OF` is descriptive metadata, not a conflict-resolution clock. The
 cutoff is the last index-source sequence included; unrelated writes do not change
-it. `CaptureCatalogSnapshot` binds both selections to that cutoff. Production
-publication captures once, publishes selected products, then publishes the CAT
-index. A product failure prevents index publication. The JSON sidecar carries
+it. `CaptureCatalogSnapshot` binds the index and one product selection per
+retained product standard to that cutoff. Production publication captures once,
+publishes the selected products of each product standard (OCM, then OMM, each
+as its own series), then publishes the CAT index. A product
+failure prevents index publication. The JSON sidecar carries
 `publicationCutoff` for the shared internal capture and `publicationSourceCutoff`
 for the source-local consumer cursor. The SDS schemas, signatures, and transport
 are unchanged.
@@ -184,7 +211,7 @@ Ordinary deletion and expiry do not remove retained records from snapshots. For
 an operator takedown, set `catalog_exclude_cids` on a retained CAT source rule to
 an array of the CAT payload CIDs to remove. Exclusions are durable and additive;
 they remove those selected index records from future snapshots and pending CAT
-batch selections and their referenced products from pending OCM batch selections,
+batch selections and their referenced products from pending product batch selections,
 with unreferenced products omitted from compact snapshots,
 without restoring older versions. A replacement full snapshot
 communicates the new exclusion policy. Existing immutable exports and captured

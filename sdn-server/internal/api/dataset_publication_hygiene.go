@@ -112,9 +112,19 @@ func (s *ConcreteDatasetPublicationService) SweepPublicationFiles() {
 	}
 }
 
-// ipnsPointerPublishTimeout bounds one name/publish call. An online Kubo puts
-// the record into the DHT before it answers.
+// ipnsPointerPublishTimeout bounds one pointer publish: the name/publish call
+// when no delegated publisher is configured (an online Kubo puts the record
+// into the DHT before it answers), else reading the signed record back and
+// sending it to the publishers.
 const ipnsPointerPublishTimeout = 3 * time.Minute
+
+// ipnsPointerDHTTimeout bounds Kubo's own DHT put when delegated publishers
+// carry the record: it runs on after the pointer is published, and only its
+// outcome is logged.
+const ipnsPointerDHTTimeout = 15 * time.Minute
+
+// ipnsLocalRecordPoll is how often the node looks for the record Kubo signed.
+const ipnsLocalRecordPoll = 250 * time.Millisecond
 
 type publicationHygiene struct {
 	mu        sync.Mutex
@@ -199,6 +209,62 @@ func (h *publicationHygiene) policy() (config.PublicationRetentionConfig, []conf
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.retention, h.pointers
+}
+
+// shortSnapshotRefusal is the snapshot guard (publishing.retention.lanes[]
+// .min_record_ratio): it refuses a batch of a snapshot lane that holds fewer
+// than ratio x the records of the newest series the lane published from
+// another batch. Nil when the lane has no guard, has no earlier series, or the
+// batch is large enough. Refused batches record no series, so the comparison
+// is always against the last batch that WAS published.
+func (s *ConcreteDatasetPublicationService) shortSnapshotRefusal(store *storage.FlatSQLStore, schema string, req DatasetPublicationRequest) error {
+	retention, _ := s.hygiene.policy()
+	ratio, minRecords := retention.SnapshotFloorFor(schema, req.ProviderID, req.SourceName)
+	if (ratio <= 0 && minRecords <= 0) || store == nil {
+		return nil
+	}
+	// The batch's size: the journal selection's count when the store keeps
+	// a publication journal for the lane, else the batch's tagged records.
+	var count int
+	var err error
+	if s.selection != nil {
+		_, count = s.selection.Fingerprint()
+	} else if _, count, err = store.DatasetPublicationSetFingerprint(schema, req.ProviderID, req.SourceName, req.BatchID); err != nil {
+		log.Warnf("snapshot guard %s %s/%s batch %q: cannot count the batch (%v); guard skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
+		return nil
+	}
+	// The floor: min_records, raised to ratio x the newest series the lane
+	// published from another batch when that is higher.
+	floor := minRecords
+	basis := fmt.Sprintf("min_records %d", minRecords)
+	keeps := "the lane keeps advertising the series it had"
+	if ratio > 0 {
+		lane := storage.DatasetPublicationLane{SchemaName: schema, ProviderID: req.ProviderID, SourceName: req.SourceName}
+		series, err := store.ListDatasetPublicationSeries(lane)
+		if err != nil {
+			// The ratio cannot be measured on a read error: publish as before
+			// (or hold to min_records) rather than stall the lane, and say so.
+			log.Warnf("snapshot guard %s %s/%s batch %q: cannot read published series (%v); ratio skipped", schema, req.ProviderID, req.SourceName, req.BatchID, err)
+		}
+		for _, previous := range series { // newest first
+			if previous.BatchID == req.BatchID || previous.RecordCount <= 0 {
+				continue
+			}
+			if byRatio := int(float64(previous.RecordCount)*ratio + 0.999999); byRatio > floor {
+				floor = byRatio
+				basis = fmt.Sprintf("%.2f x %d, the series published %s from batch %q", ratio, previous.RecordCount, previous.PublishedAt.Format(time.RFC3339), previous.BatchID)
+				keeps = "the lane keeps advertising that series"
+			}
+			break
+		}
+	}
+	if count >= floor {
+		return nil
+	}
+	refusal := fmt.Errorf("snapshot batch %q of %s %s/%s holds %d records, under %d (%s): REFUSED, %s; if the source really shrank, lower or remove min_record_ratio / min_records for this lane",
+		req.BatchID, schema, req.ProviderID, req.SourceName, count, floor, basis, keeps)
+	log.Warnf("snapshot guard: %v", refusal)
+	return refusal
 }
 
 // publicationFingerprint is the set the request would export, taken before
@@ -350,12 +416,14 @@ func (s *ConcreteDatasetPublicationService) afterPublication(ctx context.Context
 			continue
 		}
 		s.hygiene.ipns.enqueue(ipnsPointerJob{
-			APIURL:   s.ipfsAPIURL,
-			Key:      strings.TrimSpace(pointer.Key),
-			Path:     "/ipfs/" + strings.TrimSpace(result.ManifestCID),
-			Lifetime: pointer.Lifetime,
-			TTL:      pointer.TTL,
-			Lane:     schema + " " + req.ProviderID + "/" + req.SourceName,
+			APIURL:         s.ipfsAPIURL,
+			Key:            strings.TrimSpace(pointer.Key),
+			Path:           "/ipfs/" + strings.TrimSpace(result.ManifestCID),
+			Lifetime:       pointer.Lifetime,
+			TTL:            pointer.TTL,
+			Lane:           schema + " " + req.ProviderID + "/" + req.SourceName,
+			Publishers:     append([]string(nil), pointer.DelegatedPublishers...),
+			RepublishEvery: pointer.RepublishEvery,
 		})
 	}
 	return nil
@@ -714,6 +782,108 @@ type ipnsPointerJob struct {
 	Lifetime time.Duration
 	TTL      time.Duration
 	Lane     string
+	// Publishers are Routing V1 HTTP publishers that receive the signed
+	// record (publishing.ipns_pointers[].delegated_publishers).
+	Publishers []string
+	// RepublishEvery re-sends the pointer while it is still the newest.
+	RepublishEvery time.Duration
+}
+
+// publishIPNSPointer publishes one pointer. Without delegated publishers it
+// is Kubo's name/publish, DHT put included. With them, Kubo signs and stores
+// the record, the node reads it back from Kubo's own datastore and PUTs it to
+// every publisher, and Kubo's DHT put runs on in the background (its outcome
+// is only logged): on a host where the DHT put outlasts the deadline the name
+// still moves.
+func publishIPNSPointer(ctx context.Context, job ipnsPointerJob) (string, error) {
+	if len(job.Publishers) == 0 {
+		name, _, err := storage.PublishIPNSName(ctx, job.APIURL, job.Key, job.Path, job.Lifetime, job.TTL)
+		return name, err
+	}
+	name, err := storage.KuboKeyIPNSName(ctx, job.APIURL, job.Key)
+	if err != nil {
+		return "", err
+	}
+	previous, held, err := storage.ReadLocalIPNSRecord(ctx, job.APIURL, name)
+	if err != nil {
+		return name, err
+	}
+	if !held {
+		previous = storage.LocalIPNSRecord{}
+	}
+	published := make(chan error, 1)
+	go func() {
+		dhtCtx, cancel := context.WithTimeout(context.Background(), ipnsPointerDHTTimeout)
+		defer cancel()
+		_, _, err := storage.PublishIPNSName(dhtCtx, job.APIURL, job.Key, job.Path, job.Lifetime, job.TTL)
+		published <- err
+		if err != nil {
+			log.Infof("IPNS pointer %s (key %s) -> %s: Kubo's own name/publish (DHT put) ended: %v", job.Lane, job.Key, job.Path, err)
+		}
+	}()
+	record, err := waitForSignedIPNSRecord(ctx, job, name, previous, published)
+	if err != nil {
+		return name, err
+	}
+	var failures []string
+	for _, publisher := range job.Publishers {
+		if err := storage.PutIPNSRecordToPublisher(ctx, publisher, name, record.Raw); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
+	if len(failures) == len(job.Publishers) {
+		return name, fmt.Errorf("no delegated publisher accepted sequence %d: %s", record.Sequence, strings.Join(failures, "; "))
+	}
+	if len(failures) > 0 {
+		log.Warnf("IPNS pointer %s (key %s) sequence %d: %s", job.Lane, job.Key, record.Sequence, strings.Join(failures, "; "))
+	}
+	log.Infof("IPNS pointer %s: /ipns/%s sequence %d valid until %s sent to %d of %d delegated publishers", job.Lane, name, record.Sequence, record.Validity.UTC().Format(time.RFC3339), len(job.Publishers)-len(failures), len(job.Publishers))
+	return name, nil
+}
+
+// waitForSignedIPNSRecord waits until Kubo's datastore holds a record for
+// name that names job.Path and is newer than previous (the record Kubo held
+// before this publish; zero when it held none). Kubo stores the record before
+// its DHT put, so this does not wait on the DHT.
+//
+// Newer is the IPNS order: a higher sequence, or the same sequence with a
+// later validity. boxo's publisher raises the sequence only when the value
+// changes, so re-sending the same pointer (republish_every, the resume after
+// boot) gives the same sequence with a later end of life; on host-02 on
+// 2026-11-21 the resume waited for sequence 194 while Kubo had re-signed 193.
+func waitForSignedIPNSRecord(ctx context.Context, job ipnsPointerJob, name string, previous storage.LocalIPNSRecord, published <-chan error) (storage.LocalIPNSRecord, error) {
+	ticker := time.NewTicker(ipnsLocalRecordPoll)
+	defer ticker.Stop()
+	answered := false
+	var publishErr error
+	newer := func(record storage.LocalIPNSRecord) bool {
+		if record.Sequence != previous.Sequence {
+			return record.Sequence > previous.Sequence
+		}
+		return record.Validity.After(previous.Validity)
+	}
+	for {
+		record, held, err := storage.ReadLocalIPNSRecord(ctx, job.APIURL, name)
+		if err == nil && held && record.Value == job.Path && newer(record) {
+			return record, nil
+		}
+		if answered {
+			if publishErr != nil {
+				return storage.LocalIPNSRecord{}, fmt.Errorf("post IPFS name/publish: %w", publishErr)
+			}
+			if err != nil {
+				return storage.LocalIPNSRecord{}, err
+			}
+			return storage.LocalIPNSRecord{}, fmt.Errorf("Kubo answered name/publish but holds no record for /ipns/%s naming %s newer than sequence %d valid until %s", name, job.Path, previous.Sequence, previous.Validity.UTC().Format(time.RFC3339Nano))
+		}
+		select {
+		case <-ctx.Done():
+			return storage.LocalIPNSRecord{}, fmt.Errorf("Kubo stored no record for /ipns/%s naming %s before the deadline: %w", name, job.Path, ctx.Err())
+		case publishErr = <-published:
+			answered = true
+		case <-ticker.C:
+		}
+	}
 }
 
 // ipnsPointerStatus is the outcome of the last publish under one key.
@@ -737,20 +907,114 @@ type ipnsPointerWorker struct {
 	order   []string
 	running bool
 	status  map[string]ipnsPointerStatus
-	publish func(ctx context.Context, job ipnsPointerJob) (string, error)
+	// generation counts publishes per key; only the republish timer of the
+	// newest publish of a key may fire.
+	generation map[string]uint64
+	stopped    bool
+	publish    func(ctx context.Context, job ipnsPointerJob) (string, error)
 }
 
 func newIPNSPointerWorker() *ipnsPointerWorker {
 	w := &ipnsPointerWorker{
-		pending: make(map[string]ipnsPointerJob),
-		status:  make(map[string]ipnsPointerStatus),
-		publish: func(ctx context.Context, job ipnsPointerJob) (string, error) {
-			name, _, err := storage.PublishIPNSName(ctx, job.APIURL, job.Key, job.Path, job.Lifetime, job.TTL)
-			return name, err
-		},
+		pending:    make(map[string]ipnsPointerJob),
+		status:     make(map[string]ipnsPointerStatus),
+		generation: make(map[string]uint64),
+		publish:    publishIPNSPointer,
 	}
 	w.idle = sync.NewCond(&w.mu)
 	return w
+}
+
+// scheduleRepublish re-enqueues job after its RepublishEvery unless a newer
+// publish of the key happened meanwhile (whatever this one's outcome, so a
+// failed republish is retried at the next interval).
+func (w *ipnsPointerWorker) scheduleRepublish(job ipnsPointerJob, generation uint64) {
+	if job.RepublishEvery <= 0 {
+		return
+	}
+	time.AfterFunc(job.RepublishEvery, func() {
+		w.mu.Lock()
+		current := !w.stopped && w.generation[job.Key] == generation
+		w.mu.Unlock()
+		if current {
+			w.enqueue(job)
+		}
+	})
+}
+
+// ResumeIPNSPointers re-sends, after delay, the pointer each key with
+// republish_every already holds in Kubo: the signed record Kubo keeps names
+// the last series this node pointed at. Without it a restart followed by no
+// new series (an upstream outage, or every batch refused by the snapshot
+// guard) would leave the name to lapse from the DHT. A key that published in
+// this process before the delay ran is left alone; republish_every repeats
+// the resumed pointer from then on.
+func (s *ConcreteDatasetPublicationService) ResumeIPNSPointers(delay time.Duration) {
+	if s == nil || s.hygiene == nil || s.hygiene.ipns == nil || strings.TrimSpace(s.ipfsAPIURL) == "" {
+		return
+	}
+	_, pointers := s.hygiene.policy()
+	for _, pointer := range pointers {
+		if pointer.RepublishEvery <= 0 || strings.TrimSpace(pointer.Key) == "" {
+			continue
+		}
+		pointer := pointer
+		time.AfterFunc(delay, func() { s.resumeIPNSPointer(pointer) })
+	}
+}
+
+func (s *ConcreteDatasetPublicationService) resumeIPNSPointer(pointer config.IPNSPointerConfig) {
+	key := strings.TrimSpace(pointer.Key)
+	lane := strings.TrimSpace(pointer.Schema + " " + pointer.ProviderID + "/" + pointer.SourceName)
+	if !s.hygiene.ipns.untouched(key) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	name, err := storage.KuboKeyIPNSName(ctx, s.ipfsAPIURL, key)
+	if err != nil {
+		log.Warnf("IPNS pointer %s (key %s): not resumed: %v", lane, key, err)
+		return
+	}
+	record, held, err := storage.ReadLocalIPNSRecord(ctx, s.ipfsAPIURL, name)
+	if err != nil || !held {
+		log.Warnf("IPNS pointer %s (key %s): not resumed: Kubo holds no signed record for /ipns/%s (%v)", lane, key, name, err)
+		return
+	}
+	if !strings.HasPrefix(record.Value, "/ipfs/") || !record.Validity.After(time.Now()) {
+		log.Warnf("IPNS pointer %s (key %s): not resumed: the record Kubo holds names %s and was valid until %s", lane, key, record.Value, record.Validity.UTC().Format(time.RFC3339))
+		return
+	}
+	log.Infof("IPNS pointer %s (key %s): resuming /ipns/%s -> %s (sequence %d)", lane, key, name, record.Value, record.Sequence)
+	s.hygiene.ipns.enqueue(ipnsPointerJob{
+		APIURL:         s.ipfsAPIURL,
+		Key:            key,
+		Path:           record.Value,
+		Lifetime:       pointer.Lifetime,
+		TTL:            pointer.TTL,
+		Lane:           lane,
+		Publishers:     append([]string(nil), pointer.DelegatedPublishers...),
+		RepublishEvery: pointer.RepublishEvery,
+	})
+}
+
+// untouched reports whether nothing was published or queued under key in
+// this process yet.
+func (w *ipnsPointerWorker) untouched(key string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, queued := w.pending[key]
+	return !queued && w.generation[key] == 0 && !w.stopped
+}
+
+// stop ends republishing (shutdown, tests).
+func (w *ipnsPointerWorker) stop() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.stopped = true
+	w.mu.Unlock()
 }
 
 func (w *ipnsPointerWorker) enqueue(job ipnsPointerJob) {
@@ -782,11 +1046,14 @@ func (w *ipnsPointerWorker) run() {
 		w.order = w.order[1:]
 		job := w.pending[key]
 		delete(w.pending, key)
+		w.generation[key]++
+		generation := w.generation[key]
 		w.mu.Unlock()
 
 		ctx, cancel := context.WithTimeout(context.Background(), ipnsPointerPublishTimeout)
 		name, err := w.publish(ctx, job)
 		cancel()
+		w.scheduleRepublish(job, generation)
 		if err != nil {
 			log.Warnf("IPNS pointer %s (key %s) -> %s failed: %v", job.Lane, job.Key, job.Path, err)
 		} else {

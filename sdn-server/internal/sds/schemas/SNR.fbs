@@ -1,5 +1,5 @@
-// Hash: 27620fd7dca9079faf5500ba9bd51aaf2882cfc17d8dc7f4fe002b9721d45798
-// Version: 0.0.3
+// Hash: 59be6bcb6447632346ab70a21b15adb898c5fbbec4abcdaf2309a957be16c816
+// Version: 0.0.5
 // -----------------------------------END_HEADER
 include "../OPP/main.fbs";
 include "../RFB/main.fbs";
@@ -100,7 +100,9 @@ enum snrAntennaPattern : byte {
   /// The earth-coverage (teardrop) beam of a geostationary antenna.
   TEARDROP,
   TOROIDAL,
-  CARDIOID
+  CARDIOID,
+  /// An electronically steered array; its pattern is a $PAP synthesis.
+  PHASED_ARRAY
 }
 
 /// One spectral band of a sensor, in Hz. Hz is the unit for every band, optical
@@ -200,8 +202,16 @@ table SNROpticalParameters {
 ///
 /// Platform: NORAD_CAT_ID and OBJECT_ID join to $CAT, SITE_ID to $SIT.ID,
 /// SENSOR_ID to $SEN.ID. A sensor not attached to a platform has none of them.
+///
+/// A record with none of the platform fields is a DEFINITION: one sensor
+/// configuration, published once, that any number of hosts carry. A $SLO
+/// (Sensor Loadout) binds it to a host or to a set of hosts by CONFIG_STANDARD "$SNR"
+/// and CONFIG_ID = SENSOR_ID, and carries what differs per host (dates, count,
+/// position, serial number, mounting, status). A definition's SENSOR_ID names
+/// the configuration, not one physical sensor, so it has no $SEN.
 table SNR {
-  /// Stable identifier of this sensor. $SEN.ID of the same sensor.
+  /// Stable identifier of this sensor, or of the configuration when the record
+  /// is a definition. $SEN.ID of the same sensor when the record has a platform.
   SENSOR_ID:string (required);
   NAME:string;
   /// $CAT.NORAD_CAT_ID of the spacecraft that carries the sensor. 0 = none.

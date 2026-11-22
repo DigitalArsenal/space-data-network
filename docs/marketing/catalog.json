@@ -250,7 +250,8 @@
         "Click-to-measure distance on the globe",
         "Markup notes and lines",
         "Rendezvous and proximity charts from element-set history: R/I/C, separation, range rate, plane angle and ROE",
-        "Event view from SDS records with models, sensors, maneuvers, lighting and provenance"
+        "Event view from SDS records with models, sensors, maneuvers, lighting and provenance",
+        "Survivability threat scenario: direct-ascent sites with their missiles and published reach, the co-orbital objects in the news and uplink jammers, each figure with its public source; when each satellite of a constellation is in reach, how close the co-orbital objects come and how much contact time a jammer sees"
       ],
       "standards": [
         "RIC frame"
@@ -261,7 +262,7 @@
         "ANL"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:573-585; modes/anl/surface.ts:113-122; modes/anl/ricBox.ts; modes/anl/range.ts; modes/anl/measure.ts; modes/anl/markup.ts",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:573-585; modes/anl/surface.ts:113-122; modes/anl/ricBox.ts; modes/anl/range.ts; modes/anl/measure.ts; modes/anl/markup.ts; threats/threatScenario.svelte.ts; threats/threatCatalog.ts",
       "plan": "free"
     },
     {
@@ -2296,6 +2297,7 @@
     "ANL:MARKUP",
     "ANL:RPO",
     "ANL:EVENT",
+    "ANL:THREATS",
     "TRK:COLLECT PLAN",
     "TRK:SAR STRIP"
   ],

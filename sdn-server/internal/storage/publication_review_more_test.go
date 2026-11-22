@@ -204,8 +204,8 @@ func TestPublicationReviewHistoryMemory(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(s)
 	growth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-	t.Logf("history_records=100000 selected_index=%d selected_products=%d retained_heap_growth_bytes=%d", len(snap.Index.refs), len(snap.Products.refs), growth)
-	if len(snap.Index.refs) != 1 || len(snap.Products.refs) != 1 || growth > 128<<20 {
+	t.Logf("history_records=100000 selected_index=%d selected_products=%d retained_heap_growth_bytes=%d", len(snap.Index.refs), len(snap.Products[0].refs), growth)
+	if len(snap.Index.refs) != 1 || len(snap.Products[0].refs) != 1 || growth > 128<<20 {
 		t.Fatal("history payloads retained in snapshot")
 	}
 }

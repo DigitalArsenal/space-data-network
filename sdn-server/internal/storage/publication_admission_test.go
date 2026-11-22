@@ -21,7 +21,9 @@ func TestPublicationGenerationAdmissionAndHeadroom(t *testing.T) {
 	reclamationDay(t, s, 0, 5)
 	terminalPublish(t, s)
 	before := s.PublicationJournalStats().Records
-	products, indexes := reclamationRecords(1, 6)
+	_, indexes := reclamationRecords(1, 6)
+	// The product allowance is four products for each admitted object.
+	products, _ := reclamationRecords(1, 4*5+1)
 	put := func(schema, source, batch string, records [][]byte) error {
 		_, err := s.StoreBatchWithSourceTags(schema, records, "synthetic", nil, SourceTags{ProviderID: "synthetic", SourceName: source, BatchID: batch})
 		return err

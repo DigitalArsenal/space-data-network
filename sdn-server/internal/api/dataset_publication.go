@@ -497,34 +497,49 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 			return &DatasetPublicationResult{RecordCount: 0}, nil
 		}
 	}
-	// A compact CAT snapshot publishes its selected products before its index.
-	// Both series use one validated cutoff and own immutable bytes throughout.
+	if activeReq.BatchID != "" {
+		if refusal := activeService.shortSnapshotRefusal(activeStore, schema, activeReq); refusal != nil {
+			// The batch stays in the store; only its publication is refused.
+			// Its journal entry is closed like an empty batch's, so the
+			// refusal is not retried, and nothing is retired: the lane keeps
+			// advertising the series it had.
+			if err := activeStore.CompletePublication(activeService.selection); err != nil {
+				return nil, atPublicationStep("record completion", err)
+			}
+			return nil, atPublicationStep("snapshot guard", refusal)
+		}
+	}
+	// A compact CAT snapshot publishes its selected products, one series per
+	// product standard, before its index. Every series uses one validated
+	// cutoff and owns immutable bytes throughout.
 	if activeReq.FullCatalog && strings.TrimSpace(activeReq.BatchID) == "" && schema == "CAT.fbs" && activeService.selection != nil {
 		if productSource, ok := activeStore.CatalogProductSource(activeReq.ProviderID, activeReq.SourceName); ok {
 			snap := catalogSnapshot
 			activeService.selection = snap.Index
-			productService := activeService
-			productService.selection = snap.Products
-			productReq := activeReq
-			productReq.Schema = "OCM.fbs"
-			productReq.SourceName = productSource
-			productReq.BatchID = ""
-			productReq.DatasetID = ""
-			productUnlock, lockErr := activeService.hygiene.lockLane(ctx, "OCM.fbs", productReq.ProviderID, productReq.SourceName)
-			if lockErr != nil {
-				return nil, atPublicationStep("wait for the lane", lockErr)
-			}
-			if _, count := snap.Products.Fingerprint(); count > 0 {
-				result, cars, publishErr := publish(&productService, ctx, productReq, "OCM.fbs")
-				if publishErr == nil {
-					publishErr = atPublicationStep("record completion", productService.afterPublication(ctx, productReq, "OCM.fbs", result, cars, productService.publicationFingerprint(productReq, "OCM.fbs"), activeService.now()))
+			for _, products := range snap.Products {
+				productService := activeService
+				productService.selection = products
+				productReq := activeReq
+				productReq.Schema = products.Schema
+				productReq.SourceName = productSource
+				productReq.BatchID = ""
+				productReq.DatasetID = ""
+				productUnlock, lockErr := activeService.hygiene.lockLane(ctx, products.Schema, productReq.ProviderID, productReq.SourceName)
+				if lockErr != nil {
+					return nil, atPublicationStep("wait for the lane", lockErr)
 				}
-				productUnlock()
-				if publishErr != nil {
-					return nil, publishErr
+				if _, count := products.Fingerprint(); count > 0 {
+					result, cars, publishErr := publish(&productService, ctx, productReq, products.Schema)
+					if publishErr == nil {
+						publishErr = atPublicationStep("record completion", productService.afterPublication(ctx, productReq, products.Schema, result, cars, productService.publicationFingerprint(productReq, products.Schema), activeService.now()))
+					}
+					productUnlock()
+					if publishErr != nil {
+						return nil, publishErr
+					}
+				} else {
+					productUnlock()
 				}
-			} else {
-				productUnlock()
 			}
 		}
 	}

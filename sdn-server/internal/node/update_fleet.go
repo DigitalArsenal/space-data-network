@@ -14,7 +14,6 @@ package node
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -402,11 +401,7 @@ func (f *updateFleet) announce(ctx context.Context, topic *pubsub.Topic) {
 		if status == nil {
 			return
 		}
-		raw, err := json.Marshal(status)
-		if err != nil {
-			return
-		}
-		if err := topic.Publish(ctx, raw); err != nil {
+		if err := topic.Publish(ctx, update.MarshalStatus(status)); err != nil {
 			if ctx.Err() == nil {
 				log.Warnf("Update status not published (%s): %v", why, err)
 			}

@@ -86,11 +86,23 @@ type SubstrateReport struct {
 	// Runs is how many self-test runs gave this report: an inconclusive run
 	// is run again, up to substrateRuns times (RunSubstrateSelfTestSettled).
 	Runs int `json:"runs"`
+	// PatchSeries is the SDN runtime patch series the binary links (patch
+	// 10-series-marker); 0 in a build with the wasmedge_unpatched tag.
+	PatchSeries int `json:"patch_series"`
 }
 
-// Patched reports whether the runtime behaves like the patched build.
+// RequiredPatchSeries is the runtime patch series this node needs. The
+// behaviors probed below cover patches 01-07; 08 and 09 (no pthread_detach)
+// cannot be probed from inside, so the series the binary links stands for
+// them.
+const RequiredPatchSeries = 10
+
+// Patched reports whether the runtime is the patched build: it links the
+// required patch series and behaves like it. A build made with the
+// wasmedge_unpatched tag links series 0 and is never patched.
 func (r SubstrateReport) Patched() bool {
-	return !r.Inconclusive && len(r.Errors) == 0 && r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
+	return r.PatchSeries >= RequiredPatchSeries &&
+		!r.Inconclusive && len(r.Errors) == 0 && r.AtomicNotifyWithoutStore && r.StopReachesEveryThread &&
 		(!r.AOTChecked || (r.InterruptibleAOT && r.AOTAtomicMemargOffset && r.AOTLoopStopChecks && r.AOTAtomicStoreStack))
 }
 
@@ -170,7 +182,7 @@ const probeSpinnerBase = 64
 // RunSubstrateSelfTest runs the substrate checks in fresh, short-lived VMs.
 func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 	start := time.Now()
-	rep := SubstrateReport{RuntimeVersion: wasmedge.GetVersion(), AOTStop: StopObservation{Outcome: "not_checked"}}
+	rep := SubstrateReport{RuntimeVersion: wasmedge.GetVersion(), PatchSeries: PatchSeries(), AOTStop: StopObservation{Outcome: "not_checked"}}
 	if opts.Spinners <= 0 {
 		opts.Spinners = 4
 	}
@@ -247,6 +259,12 @@ func RunSubstrateSelfTest(opts SubstrateOptions) SubstrateReport {
 			conclusiveFailure = conclusiveFailure || !ok
 		}
 	}
+	// The series is a fact of the link, not an observation: a binary that
+	// links less than the required series is not patched, whatever it shows.
+	if rep.PatchSeries < RequiredPatchSeries {
+		fail("links runtime patch series %d, needs %d", rep.PatchSeries, RequiredPatchSeries)
+		conclusiveFailure = true
+	}
 	// A notify that timed out on every attempt, and a missing observation,
 	// cannot establish that a patch is absent. Only an observed behavioral
 	// mismatch can do that.
@@ -294,8 +312,8 @@ func SubstrateStatus() SubstrateReport {
 	if !substrateReport.Patched() {
 		level = "WARN"
 	}
-	fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s after %d run(s); %s\n",
-		level, substrateReport.RuntimeVersion, substrateReport.AtomicNotifyWithoutStore,
+	fmt.Fprintf(os.Stderr, "[wasmrt] %s substrate self-test: runtime %s patch-series=%d notify-without-store=%t stop-reaches-every-thread=%t interruptible-aot=%t (%.1fx) aot-atomic-memarg-offset=%t aot-loop-stop-checks=%t aot-atomic-store-stack=%t in %s after %d run(s); %s\n",
+		level, substrateReport.RuntimeVersion, substrateReport.PatchSeries, substrateReport.AtomicNotifyWithoutStore,
 		substrateReport.StopReachesEveryThread, substrateReport.InterruptibleAOT, substrateReport.AOTSpeedup,
 		substrateReport.AOTAtomicMemargOffset, substrateReport.AOTLoopStopChecks, substrateReport.AOTAtomicStoreStack,
 		substrateReport.Elapsed.Round(time.Millisecond), substrateReport.Runs, substrateReport.FailureReason())

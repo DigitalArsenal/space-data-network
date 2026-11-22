@@ -55,6 +55,11 @@ const (
 	RecordTypeExtendedSWA  RecordTypeExtended = 293
 	RecordTypeExtendedSWS  RecordTypeExtended = 294
 	RecordTypeExtendedSSY  RecordTypeExtended = 295
+	RecordTypeExtendedMOR  RecordTypeExtended = 296
+	RecordTypeExtendedDRB  RecordTypeExtended = 297
+	RecordTypeExtendedCOA  RecordTypeExtended = 298
+	RecordTypeExtendedSLO  RecordTypeExtended = 299
+	RecordTypeExtendedUST  RecordTypeExtended = 300
 )
 
 var EnumNamesRecordTypeExtended = map[RecordTypeExtended]string{
@@ -99,6 +104,11 @@ var EnumNamesRecordTypeExtended = map[RecordTypeExtended]string{
 	RecordTypeExtendedSWA:  "SWA",
 	RecordTypeExtendedSWS:  "SWS",
 	RecordTypeExtendedSSY:  "SSY",
+	RecordTypeExtendedMOR:  "MOR",
+	RecordTypeExtendedDRB:  "DRB",
+	RecordTypeExtendedCOA:  "COA",
+	RecordTypeExtendedSLO:  "SLO",
+	RecordTypeExtendedUST:  "UST",
 }
 
 var EnumValuesRecordTypeExtended = map[string]RecordTypeExtended{
@@ -143,6 +153,11 @@ var EnumValuesRecordTypeExtended = map[string]RecordTypeExtended{
 	"SWA":  RecordTypeExtendedSWA,
 	"SWS":  RecordTypeExtendedSWS,
 	"SSY":  RecordTypeExtendedSSY,
+	"MOR":  RecordTypeExtendedMOR,
+	"DRB":  RecordTypeExtendedDRB,
+	"COA":  RecordTypeExtendedCOA,
+	"SLO":  RecordTypeExtendedSLO,
+	"UST":  RecordTypeExtendedUST,
 }
 
 func (v RecordTypeExtended) String() string {

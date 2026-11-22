@@ -62,8 +62,8 @@ func requireAppliedSnapshotCount(t *testing.T, s *FlatSQLStore, count int) {
 		t.Fatal(err)
 	}
 	defer snap.Close()
-	if len(snap.Index.refs) != count || len(snap.Products.refs) != count {
-		t.Fatalf("incomplete snapshot: index=%d products=%d want=%d", len(snap.Index.refs), len(snap.Products.refs), count)
+	if len(snap.Index.refs) != count || len(snap.Products[0].refs) != count {
+		t.Fatalf("incomplete snapshot: index=%d products=%d want=%d", len(snap.Index.refs), len(snap.Products[0].refs), count)
 	}
 }
 

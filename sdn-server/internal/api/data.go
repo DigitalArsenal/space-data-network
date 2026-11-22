@@ -175,7 +175,7 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "cursor is not a NEXT_CURSOR of this index query; restart from the first page", 0)
 			return
 		}
-		query.AfterSeq, query.ThroughSeq, query.Offset = cursor.AfterRowID, cursor.MaxRowID, 0
+		query.AfterSeq, query.ThroughSeq, query.Offset, query.KnownTotal = cursor.AfterRowID, cursor.MaxRowID, 0, cursor.TotalCount
 	}
 
 	// BOUNDED. This is an anonymous read of the single-writer record store: a
@@ -211,7 +211,7 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		pageData = &recordIndexPage{}
 	}
 	encodeCursor := func(after int64) string {
-		return datasync.EncodeRawRecordCursor(after, pageData.Through, "index-"+strconv.FormatInt(pageData.Through, 10), laneHash)
+		return datasync.EncodeRawRecordCursorTotal(after, pageData.Through, pageData.Total, "index-"+strconv.FormatInt(pageData.Through, 10), laneHash)
 	}
 	cursor, nextCursor := encodeCursor(query.AfterSeq), ""
 	if n := len(pageData.Rows); n > 0 {

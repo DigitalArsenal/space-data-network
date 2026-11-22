@@ -893,6 +893,13 @@ func EncodeRawRecordCursor(afterRowID, maxRowID int64, snapshotID string, queryH
 	return encodeRawRecordCursor(cursor)
 }
 
+// EncodeRawRecordCursorTotal is EncodeRawRecordCursor carrying the snapshot's
+// match count, so a continuation page reads it instead of counting again.
+func EncodeRawRecordCursorTotal(afterRowID, maxRowID, totalCount int64, snapshotID, queryHash string) string {
+	return encodeRawRecordCursor(rawRecordCursor{AfterRowID: afterRowID, MaxRowID: maxRowID, SnapshotID: snapshotID,
+		QueryHash: queryHash, TotalCount: max(totalCount, 0)})
+}
+
 func encodeRawRecordCursor(cursor rawRecordCursor) string {
 	if cursor.AfterRowID < 0 {
 		cursor.AfterRowID = 0

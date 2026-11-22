@@ -209,7 +209,27 @@ type FollowOptions struct {
 	// (FollowStatus.Unread) on the existing subscription; it subscribes
 	// nothing.
 	AcknowledgeUnread bool
+	// Publications is what the node keeps of the lane's publications:
+	// FollowPublicationsKeep (FollowStatus.KeepPublications),
+	// FollowPublicationsStream, or "" (a new subscription streams; an
+	// existing one keeps what it has). On a lane already followed it changes
+	// that alone.
+	Publications string
 }
+
+// What a subscription keeps of its lane's publications (FollowOptions.Publications).
+const (
+	// FollowPublicationsStream: the records arrive on the followed stream,
+	// and while the stream holds the producer's current batch the lane's
+	// publications are not fetched.
+	FollowPublicationsStream = "stream"
+	// FollowPublicationsKeep: every publication of the lane is also fetched
+	// and imported, so this node holds its manifest, shard and index and
+	// serves them (a gateway host whose readers fetch the producer's
+	// publications from it); the lane's retention rule decides which
+	// publications stay.
+	FollowPublicationsKeep = "keep"
+)
 
 // FollowPlan is a subscription's first read and whether this node takes it.
 type FollowPlan struct {
@@ -275,6 +295,10 @@ type FollowStatus struct {
 	// a refused cursor started again at the current batch: it stays in
 	// followFileName while Unread is set.
 	FromBeginning bool
+	// KeepPublications is set when the subscription keeps the lane's
+	// publications (FollowPublicationsKeep): each is fetched and imported
+	// although the stream carries its records.
+	KeepPublications bool
 	// Refused is why this build does not run the subscription ("" when it
 	// does): its SYNC_FILTER names a field this build does not know (a later
 	// version wrote it). The lane is not followed and its publications are
@@ -355,11 +379,26 @@ func (m *followManager) settledLocked(e *followEntry) {
 	e.settled = true
 	if e.deferred {
 		e.deferred = false
-		select {
-		case m.catchupNudge <- struct{}{}:
-		default:
-		}
+		m.nudgeCatchup()
 	}
+}
+
+// nudgeCatchup asks the stored-$PNM catch-up to run now.
+func (m *followManager) nudgeCatchup() {
+	select {
+	case m.catchupNudge <- struct{}{}:
+	default:
+	}
+}
+
+// keepPublicationsStarted is a lane that now keeps its publications: the
+// publications this node passed over (their lane not subscribed, or
+// streamed) are read again by the stored-$PNM catch-up, now.
+func (m *followManager) keepPublicationsStarted() {
+	if m.n != nil {
+		m.n.forgetDeclinedDatasetPNMs()
+	}
+	m.nudgeCatchup()
 }
 
 // What the $PNM path does with a publication of a subscribed lane
@@ -409,6 +448,74 @@ type followManager struct {
 	// blocked is why the subscription files are not loaded ("" once they
 	// are): while it is set nothing writes them and no lane runs.
 	blocked string
+	// peered is the producers peerProducer has seen (guarded by mu): true
+	// for one this node added to Kubo's peering service, false for one that
+	// was peered already (the repository's Peering.Peers), which it never
+	// removes.
+	peered map[peer.ID]bool
+}
+
+// peerProducer keeps a followed lane's producer in Kubo's peering service
+// when this node has no content routing (its DHT off). Bitswap's broadcast
+// control asks only peers that served this node before, LAN peers and
+// peered peers for a block, so without it the node's own fetches by CID
+// (a kept publication's shard) and its gateway's never reach the producer
+// (host-01 and host-02, 2026-11-21). A node with a DHT finds the producer
+// as a provider and needs none of this.
+func (m *followManager) peerProducer(pid peer.ID) {
+	if m.n == nil || m.n.kubo == nil || m.n.host == nil || m.n.dhtParticipation() != dhtParticipationOff {
+		return
+	}
+	m.mu.Lock()
+	if m.peered == nil {
+		m.peered = map[peer.ID]bool{}
+	}
+	_, seen := m.peered[pid]
+	if !seen {
+		m.peered[pid] = false
+	}
+	m.mu.Unlock()
+	if seen {
+		return
+	}
+	if m.n.kubo.Peer(peer.AddrInfo{ID: pid, Addrs: m.n.host.Peerstore().Addrs(pid)}) {
+		m.mu.Lock()
+		m.peered[pid] = true
+		m.mu.Unlock()
+		log.Infof("Followed producer %s peered in Kubo: this node's DHT is off, and Bitswap asks only peered, LAN and earlier serving peers for a block", pid)
+	}
+}
+
+// unpeerProducers removes from Kubo's peering service each producer in
+// stopped that peerProducer added and no remaining subscription follows.
+func (m *followManager) unpeerProducers(stopped []*followEntry) {
+	if m.n == nil || m.n.kubo == nil {
+		return
+	}
+	var drop []peer.ID
+	m.mu.Lock()
+	for _, e := range stopped {
+		pid, err := peer.Decode(e.status.Producer)
+		if err != nil || !m.peered[pid] {
+			continue
+		}
+		still := false
+		for k := range m.subs {
+			if k.Producer == e.status.Producer {
+				still = true
+				break
+			}
+		}
+		if !still {
+			delete(m.peered, pid)
+			drop = append(drop, pid)
+		}
+	}
+	m.mu.Unlock()
+	for _, pid := range drop {
+		m.n.kubo.Unpeer(pid)
+		log.Infof("Producer %s removed from Kubo's peering: no lane is followed from it", pid)
+	}
 }
 
 // storeDir is where the followed records are stored (storage.path), whose
@@ -488,12 +595,15 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 }
 
 // Keys of a subscription's SYNC_FILTER (a URL query): where it starts, when a
-// refused cursor left records unread, and that it was made from the lane's
-// beginning.
+// refused cursor left records unread, that it was made from the lane's
+// beginning, and that it keeps the lane's publications. A build before
+// 1.1.11 does not know "publications" and holds such a subscription without
+// running it (FollowStatus.Refused).
 const (
-	followFilterStart      = "start"
-	followFilterUnread     = "unread"
-	followFilterSubscribed = "subscribed"
+	followFilterStart        = "start"
+	followFilterUnread       = "unread"
+	followFilterSubscribed   = "subscribed"
+	followFilterPublications = "publications"
 )
 
 // followFilterUnknownError is a SYNC_FILTER naming fields this build does not
@@ -527,7 +637,7 @@ func parseFollowFilter(filter string, st *FollowStatus) error {
 	var unknown []string
 	for k := range q {
 		switch k {
-		case followFilterStart, followFilterUnread, followFilterSubscribed:
+		case followFilterStart, followFilterUnread, followFilterSubscribed, followFilterPublications:
 		default:
 			unknown = append(unknown, k)
 		}
@@ -558,6 +668,11 @@ func parseFollowFilter(filter string, st *FollowStatus) error {
 				return fmt.Errorf("SYNC_FILTER %q: subscribed %q is not %q", filter, v[0], FollowStartBeginning)
 			}
 			st.FromBeginning = true
+		case followFilterPublications:
+			if v[0] != FollowPublicationsKeep {
+				return fmt.Errorf("SYNC_FILTER %q: publications %q is not %q", filter, v[0], FollowPublicationsKeep)
+			}
+			st.KeepPublications = true
 		}
 	}
 	if len(unknown) > 0 {
@@ -576,6 +691,9 @@ func followFilter(st FollowStatus) string {
 		return st.filter
 	}
 	q := url.Values{followFilterStart: {st.Start}}
+	if st.KeepPublications {
+		q.Set(followFilterPublications, FollowPublicationsKeep)
+	}
 	if !st.Unread.IsZero() {
 		q.Set(followFilterUnread, st.Unread.UTC().Format(time.RFC3339Nano))
 		if st.FromBeginning {
@@ -800,6 +918,30 @@ func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts Follo
 	if held && st.Refused != "" {
 		return FollowPlan{FollowKey: key}, fmt.Errorf("this node holds that subscription and does not run it (%s); sync unsubscribe it first to subscribe again", st.Refused)
 	}
+	switch opts.Publications {
+	case "", FollowPublicationsKeep, FollowPublicationsStream:
+	default:
+		return FollowPlan{FollowKey: key}, fmt.Errorf("publications %q is not %q or %q", opts.Publications, FollowPublicationsKeep, FollowPublicationsStream)
+	}
+	if held && opts.Publications != "" && !opts.AcknowledgeUnread && !(!st.Unread.IsZero() && opts.Start == FollowStartBeginning) {
+		// The lane is followed: only what it keeps of its publications
+		// changes; the stream and its cursor are left as they are.
+		keep := opts.Publications == FollowPublicationsKeep
+		m.mu.Lock()
+		changed := e.status.KeepPublications != keep
+		e.status.KeepPublications = keep
+		m.mu.Unlock()
+		if !changed {
+			return FollowPlan{FollowKey: key, Start: st.Start, Rule: opts.Rule}, nil
+		}
+		log.Infof("Followed lane %s %s/%s from %s: publications %s", key.Schema, key.ProviderID, key.SourceName, key.Producer,
+			map[bool]string{true: "kept (each is fetched and imported, so this node serves its files)", false: "not fetched while the stream holds the current batch"}[keep])
+		err := m.save()
+		if keep {
+			m.keepPublicationsStarted()
+		}
+		return FollowPlan{FollowKey: key, Start: st.Start, Rule: opts.Rule}, err
+	}
 	if opts.AcknowledgeUnread {
 		if !held {
 			return FollowPlan{FollowKey: key}, errors.New("this node does not subscribe to that lane from that producer")
@@ -845,7 +987,8 @@ func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts Follo
 		log.Warnf("Subscribed to %s %s/%s from %s without its statement (%s); it starts at the producer's current batch once the producer states it",
 			key.Schema, key.ProviderID, key.SourceName, key.Producer, plan.StatementError)
 	}
-	st = FollowStatus{FollowKey: key, Since: time.Now().UTC(), Start: plan.Start}
+	keep := opts.Publications == FollowPublicationsKeep || (replace && opts.Publications == "" && st.KeepPublications)
+	st = FollowStatus{FollowKey: key, Since: time.Now().UTC(), Start: plan.Start, KeepPublications: keep}
 	if plan.Start == FollowStartCurrent && plan.StatementError == "" {
 		st.Cursor = plan.Statement.ResumeCursor
 	}
@@ -857,7 +1000,11 @@ func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts Follo
 		m.startLocked(st)
 	}
 	m.mu.Unlock()
-	return plan, m.save()
+	err = m.save()
+	if keep {
+		m.keepPublicationsStarted()
+	}
+	return plan, err
 }
 
 // adopt starts a subscription without a plan (a lane converted from the
@@ -931,6 +1078,7 @@ func (m *followManager) Follow(key FollowKey, on bool) error {
 			m.n.alerts.Clear(kind, subject)
 		}
 	}
+	m.unpeerProducers(stopped)
 	return m.save()
 }
 
@@ -962,6 +1110,19 @@ func (n *Node) subscribedFrom(from peer.ID, schema, providerID, sourceName strin
 	defer n.follows.mu.Unlock()
 	e, ok := n.follows.subs[key]
 	return ok && e.status.Refused == ""
+}
+
+// followKeepsPublications reports whether this node's subscription to the
+// lane from the peer keeps its publications (FollowPublicationsKeep).
+func (n *Node) followKeepsPublications(from peer.ID, schema, providerID, sourceName string) bool {
+	if n == nil || n.follows == nil {
+		return false
+	}
+	key := normalizeFollowKey(FollowKey{Schema: schema, ProviderID: providerID, SourceName: sourceName, Producer: from.String()})
+	n.follows.mu.Lock()
+	defer n.follows.mu.Unlock()
+	e, ok := n.follows.subs[key]
+	return ok && e.status.Refused == "" && e.status.KeepPublications
 }
 
 // followPublication is what the $PNM path does with a publication of the
@@ -1214,6 +1375,7 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 	stop := context.AfterFunc(ctx, func() { _ = stream.Reset() })
 	defer stop()
 	remote := stream.Conn().RemotePeer()
+	m.peerProducer(remote)
 	req := syncwire.QRPFields{SchemaName: st.Schema, ProviderID: st.ProviderID, SourceName: st.SourceName, Limit: followPageLimit, Follow: true,
 		ResumeCursor: st.Cursor}
 	if err := syncwire.Request(stream, req); err != nil {
