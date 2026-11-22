@@ -155,11 +155,11 @@ func TestPublicationAlertRetractedLaneRealDaemons(t *testing.T) {
 }
 
 // TestPublicationAlertCheckCostRealDaemons publishes 50 batches of a lane,
-// each holding record R and one of its own, then fails the publication of
-// batch "x", which holds R and a record of its own. The check of "x"
-// fingerprints "x" alone: the node's log names no fingerprint of another
-// batch (the recount fingerprinted every one of the 50 here, each a batch
-// with a completed publication that shares R with "x").
+// batch i holding record R_i and one of its own, then fails the publication
+// of batch "x", which holds R_1 to R_50 and a record of its own. The check
+// of "x" fingerprints "x" alone: the node's log names no fingerprint of
+// another batch (the recount fingerprinted every one of the 50 here, each a
+// batch with a completed publication that shares a record with "x").
 func TestPublicationAlertCheckCostRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -169,21 +169,27 @@ func TestPublicationAlertCheckCostRealDaemons(t *testing.T) {
 	d.start(t)
 	source := "check-cost"
 	lane := "OMM.fbs publication-e2e/" + source
-	frames := make([][]byte, sharing+2)
-	for i := range frames {
-		frames[i] = baselineOMM(i)
+	// The frames are built once: a record built in another second is another
+	// record (its creation date).
+	shared := make([][]byte, sharing)
+	own := make([][]byte, sharing+1)
+	for i := range shared {
+		shared[i] = baselineOMM(i)
+	}
+	for i := range own {
+		own[i] = baselineOMM(1000 + i)
 	}
 	started := time.Now()
-	for i := 1; i <= sharing; i++ {
-		batch := fmt.Sprintf("b%02d", i)
-		d.ingestOMMFrames(t, source, batch, 0, [][]byte{frames[0], frames[i]})
+	for i := 0; i < sharing; i++ {
+		batch := fmt.Sprintf("b%02d", i+1)
+		d.ingestOMMFrames(t, source, batch, 0, [][]byte{shared[i], own[i]})
 		if pub := d.publish(t, "OMM.fbs", source, batch); pub.RecordCount != 2 {
 			t.Fatalf("the publication of %q answered %d records", batch, pub.RecordCount)
 		}
 	}
-	t.Logf("%d batches sharing record R published in %s", sharing, time.Since(started).Round(time.Second))
+	t.Logf("%d batches, each sharing a record with \"x\", published in %s", sharing, time.Since(started).Round(time.Second))
 
-	d.ingestOMMFrames(t, source, "x", 0, [][]byte{frames[0], frames[sharing+1]})
+	d.ingestOMMFrames(t, source, "x", 0, append(append([][]byte(nil), shared...), own[sharing]))
 	failBatchPublication(t, d, source, "x", 1)
 	// The check's end: the alert restated with its result.
 	t.Logf("after the check: %s", publicationAwaitLog(t, d, `Dataset publication `+lane+`: 1 failed scope(s) are still unpublished: `, 2*time.Minute))
@@ -201,5 +207,5 @@ func TestPublicationAlertCheckCostRealDaemons(t *testing.T) {
 	if fingerprinted["x"] != 1 {
 		t.Errorf("batch \"x\" was fingerprinted %d times by its check, want 1", fingerprinted["x"])
 	}
-	t.Logf("alert: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 2 records`, time.Minute))
+	t.Logf("alert: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 51 records`, time.Minute))
 }
