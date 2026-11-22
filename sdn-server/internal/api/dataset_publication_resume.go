@@ -319,10 +319,14 @@ func (s *ConcreteDatasetPublicationService) ResumeInterruptedPublications(ctx co
 	marks := s.runs.resume
 	s.runs.resume = nil
 	s.runs.mu.Unlock()
-	if len(marks) > 0 && s.store == nil {
+	if len(marks) == 0 {
+		return
+	}
+	if s.store == nil {
 		log.Errorf("Dataset publications: %d publication(s) did not complete before the node stopped, and the node has no store to publish them from; their marks are kept", len(marks))
 		return
 	}
+	log.Infof("Dataset publications: the node is ready; handling the %d mark(s) the last process left", len(marks))
 	for _, mark := range marks {
 		if publicationRedoDelay != nil {
 			if wait := publicationRedoDelay(mark.req.SourceName); wait > 0 {
