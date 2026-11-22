@@ -66,12 +66,12 @@ column name; empty strings and bytes are Null cells. A `source_name`-only
 filter is indexed (`(schema_name, source_name, cid)`).
 
 Feed heads (the topic `/space-data-network/feed-heads/2.0.0/<SCHEMA>.fbs`)
-are removed in 1.2.0: a node imports only the lanes it subscribes to, over a
+are removed in 1.1.10: a node imports only the lanes it subscribes to, over a
 followed `read-chunk` (`FOLLOW`). A lane's statement is an unfollowed
 `read-chunk` naming the lane and no batch with FILTERS `PROJECTION` Eq
 `STATEMENT`: one `$QRP` Page with `BATCH_ID`, `TOTAL_COUNT` (the current
 batch's records), `RESUME_CURSOR` (the lane's present position) and one row
-`BATCH_RECORDS`, `BATCH_BYTES`, `LANE_RECORDS`, `LANE_BYTES` (Int).
+`BATCH_RECORDS`, `BATCH_BYTES`, `LANE_RECORDS`, `LANE_BYTES` (Int). The lane figures count batch memberships, not distinct records: a record two of the lane's batches hold counts in each.
 
 ## Maintenance (admin session or loopback dev auto-admin)
 
