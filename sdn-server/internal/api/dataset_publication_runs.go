@@ -29,27 +29,19 @@ package api
 // (runDatasetPublication).
 //
 // Every publication that fails is logged as an error naming its lane, batch
-// and step, and raises the publication_failed alert of its lane. The alert
-// clears once every scope that failed in the lane is published: the same
-// batch, or the whole lane (a publication with no batch), with at least one
-// record. A publication of another batch does not clear it: a batch
-// publication carries only its own batch's records, so it does not contain
-// what the failed batch carried. Neither does a request that publishes no
-// record (an empty batch) or announces existing publications. A failed
-// announcement of existing publications raises the alert and leaves no
-// scope unpublished.
+// and step, and raises the publication_failed alert of its lane, which names
+// each failed scope and, for a failed batch, whether a completed publication
+// of the whole batch exported what it holds. When the alert clears is
+// decided from the store (dataset_publication_alert.go).
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/spacedatanetwork/sdn-server/internal/ops"
 )
 
 // errPublicationsStopped is the cause of a publication cancelled by the
@@ -103,9 +95,13 @@ func publicationStepOf(err error) string {
 // publicationRun is one running publication.
 type publicationRun struct {
 	started time.Time
-	done    chan struct{}
-	result  *DatasetPublicationResult
-	err     error
+	// startStamp and heldStamp order the run's start and its first hold of
+	// its lane (before it read the lane; 0 until then) among the service's
+	// publications (publicationRuns.order). Under publicationRuns.mu.
+	startStamp, heldStamp uint64
+	done                  chan struct{}
+	result                *DatasetPublicationResult
+	err                   error
 	// Under publicationRuns.mu: the callers waiting for the result, how to
 	// cancel the run when the last of them leaves, and the files the run
 	// reused whose time could not be refreshed (the sweep keeps them).
@@ -156,9 +152,11 @@ func (r *publicationRuns) keptFiles() map[string]bool {
 type publicationRuns struct {
 	mu    sync.Mutex
 	byKey map[string]*publicationRun
-	// failed is, per lane, the batches (or "" for the whole lane) whose
-	// publication failed and that no publication has covered since.
-	failed map[string]map[string]bool
+	// order is the last stamp given to a run's start or hold of its lane.
+	order uint64
+	// alert is the failed scopes of each lane and the worker that counts
+	// their records (dataset_publication_alert.go).
+	alert publicationAlertState
 	// files is held shared while an export writes or reuses files in the
 	// publication directory and exclusively by a sweep of it.
 	files sync.RWMutex
@@ -180,7 +178,7 @@ type publicationRuns struct {
 
 func newPublicationRuns() *publicationRuns {
 	life, stop := context.WithCancelCause(context.Background())
-	return &publicationRuns{byKey: make(map[string]*publicationRun), failed: make(map[string]map[string]bool), life: life, stop: stop}
+	return &publicationRuns{byKey: make(map[string]*publicationRun), life: life, stop: stop}
 }
 
 // oldestStart is the start of the oldest running publication other than
@@ -227,13 +225,6 @@ type publicationBoundToCallerKey struct{}
 // cancellation bound the publications it requests.
 func withPublicationBoundToCaller(ctx context.Context) context.Context {
 	return context.WithValue(ctx, publicationBoundToCallerKey{}, true)
-}
-
-// SetAlerts binds the node's operational alert registry.
-func (s *ConcreteDatasetPublicationService) SetAlerts(alerts *ops.Registry) {
-	if s != nil {
-		s.alerts = alerts
-	}
 }
 
 // StopPublications cancels every running publication, refuses new ones, and
@@ -362,7 +353,8 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 		return nil, runs.refuseForRestart(req, errPublicationsHeld, s.now())
 	}
 	if !joined {
-		run = &publicationRun{started: s.now(), done: make(chan struct{})}
+		runs.order++
+		run = &publicationRun{started: s.now(), startStamp: runs.order, done: make(chan struct{})}
 		runs.byKey[key] = run
 		runs.active.Add(1)
 	}
@@ -401,7 +393,7 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 			// resumePublication logs it.
 			var outdated *redoOutdatedError
 			if !errors.As(err, &outdated) {
-				s.reportDatasetPublication(req, s.now().Sub(run.started), result, err, stopped)
+				s.reportDatasetPublication(req, run, result, err, stopped)
 			}
 			if err == nil || !stopped {
 				runs.unmark(req)
@@ -444,13 +436,18 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 	return nil, fmt.Errorf("dataset publication %s batch %q: %w", lane, batch, cause)
 }
 
-// reportDatasetPublication logs a finished publication and raises or clears
-// its lane's publication_failed alert. A publication the node's stop
-// cancelled is logged as that and changes no alert.
-func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req DatasetPublicationRequest, took time.Duration, result *DatasetPublicationResult, err error, stopped bool) {
+// reportDatasetPublication logs a finished publication and raises its lane's
+// publication_failed alert when it failed, or hands a completed one to what
+// clears the alert. A publication the node's stop cancelled is logged as
+// that and changes no alert. On a completed publication's path it reads no
+// store, but it waits for the alert's persist lock, which failures, checks
+// and retractions hold across their row writes, and it deletes the rows of
+// the non-batch scopes it removes; the checks run on the alert worker
+// afterwards (dataset_publication_alert.go).
+func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req DatasetPublicationRequest, run *publicationRun, result *DatasetPublicationResult, err error, stopped bool) {
 	lane := datasetPublicationLaneName(req)
 	batch := strings.TrimSpace(req.BatchID)
-	took = took.Round(time.Millisecond)
+	took := s.now().Sub(run.started).Round(time.Millisecond)
 	if err != nil && stopped {
 		log.Warnf("Dataset publication %s batch %q stopped with the node after %s, at step %q", lane, batch, took, publicationStepOf(err))
 		return
@@ -458,12 +455,7 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 	if err != nil {
 		log.Errorf("Dataset publication FAILED: %s batch %q, step %q, after %s: %v", lane, batch, publicationStepOf(err), took, err)
 		text := fmt.Sprintf("dataset publication %s batch %q failed at step %q after %s: %v", lane, batch, publicationStepOf(err), took, err)
-		// An announcement of existing publications leaves nothing
-		// unpublished: the lane's next publication clears its alert.
-		if !req.AnnounceExisting {
-			text += " (unpublished: " + strings.Join(s.runs.failScope(lane, batch), ", ") + ")"
-		}
-		s.alerts.Raise(ops.KindPublicationFailed, lane, ops.SeverityError, text)
+		s.failPublication(req, lane, s.runs.readStamp(run), publicationStepOf(err), text)
 		return
 	}
 	records, manifest := 0, ""
@@ -471,59 +463,36 @@ func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req Dataset
 		records, manifest = result.RecordCount, result.ManifestCID
 	}
 	log.Infof("Dataset publication %s batch %q completed in %s: %d records, manifest %s", lane, batch, took, records, manifest)
-	if req.AnnounceExisting || records == 0 {
+	s.publicationCompleted(req, lane, s.runs.readStamp(run))
+}
+
+// markHeld records that run holds its lane, before it reads it.
+func (r *publicationRuns) markHeld(run *publicationRun) {
+	if r == nil || run == nil {
 		return
 	}
-	if left := s.runs.coverScope(lane, batch); left == 0 {
-		s.alerts.Clear(ops.KindPublicationFailed, lane)
-	} else {
-		log.Warnf("Dataset publication %s: %d failed scope(s) are still unpublished", lane, left)
-	}
-}
-
-// failScope records a failed scope of a lane and returns the lane's failed
-// scopes, each a batch name or "the whole lane".
-func (r *publicationRuns) failScope(lane, batch string) []string {
-	if r == nil {
-		return []string{scopeName(batch)}
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.failed[lane] == nil {
-		r.failed[lane] = make(map[string]bool)
+	if run.heldStamp == 0 {
+		r.order++
+		run.heldStamp = r.order
 	}
-	r.failed[lane][batch] = true
-	scopes := make([]string, 0, len(r.failed[lane]))
-	for scope := range r.failed[lane] {
-		scopes = append(scopes, scopeName(scope))
-	}
-	sort.Strings(scopes)
-	return scopes
 }
 
-// coverScope removes the failed scopes a completed publication of batch
-// ("" for the whole lane) covers and returns how many are left.
-func (r *publicationRuns) coverScope(lane, batch string) int {
-	if r == nil {
+// readStamp orders run's read of its lane among the service's publications:
+// its hold of the lane (publications of a lane hold it one at a time, and
+// read it only while they hold it), or, for a run that never held it, its
+// start (a failed run that never held its lane read nothing; its scope is
+// what the lane held when it was requested). It is an order, not a clock: a
+// step of the wall clock does not change it.
+func (r *publicationRuns) readStamp(run *publicationRun) uint64 {
+	if r == nil || run == nil {
 		return 0
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if batch == "" {
-		delete(r.failed, lane)
-		return 0
+	if run.heldStamp != 0 {
+		return run.heldStamp
 	}
-	delete(r.failed[lane], batch)
-	left := len(r.failed[lane])
-	if left == 0 {
-		delete(r.failed, lane)
-	}
-	return left
-}
-
-func scopeName(batch string) string {
-	if batch == "" {
-		return "the whole lane"
-	}
-	return fmt.Sprintf("batch %q", batch)
+	return run.startStamp
 }

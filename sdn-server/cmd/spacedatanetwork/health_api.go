@@ -186,3 +186,30 @@ func notReadyReason(deps healthDeps) string {
 	}
 	return ""
 }
+
+// startPublicationAlertChecksWhenReady starts the checks of the failed
+// batches the last run stopped with (api StartPublicationAlertChecks) once
+// trialDone is closed (an update's trial is over, or none runs) and the node
+// answers ready. With no readiness check (admin listener off) they start
+// once trialDone is closed.
+func startPublicationAlertChecksWhenReady(ctx context.Context, publications *api.ConcreteDatasetPublicationService, readiness func(context.Context) string, trialDone <-chan struct{}) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-trialDone:
+	}
+	for readiness != nil {
+		probeCtx, cancel := context.WithTimeout(ctx, readyProbeTimeout+time.Second)
+		reason := readiness(probeCtx)
+		cancel()
+		if reason == "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+	publications.StartPublicationAlertChecks()
+}

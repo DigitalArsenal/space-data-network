@@ -13,7 +13,7 @@
 #   preflight                      preflight, encryption
 #   go-quick (four package groups) go
 #   go-heavy (eleven test groups)  heavy
-#   publication-e2e (six groups)   publication
+#   publication-e2e (nine groups)   publication
 #   go-builds                      builds
 #   js                             js
 #   delivery                       delivery
@@ -629,7 +629,7 @@ run_go_extended() {
   return "$failed"
 }
 
-# Publication between real daemons, in six groups by test name, at most 7
+# Publication between real daemons, in nine groups by test name, at most 7
 # tests each. Run 44031044072 ran the whole suite in one binary and reached
 # go test's 50m panic during its tenth test; its nine finished tests took
 # 543s (Retention), 473s (Follow), 356s (the two-daemon delivery test), 297s
@@ -639,12 +639,12 @@ run_go_extended() {
 # tests took 231 to 301s each. At about 300s a test, 7 tests are about 35
 # minutes of a group's 45m budget. The tests that need the 1.1.9 release
 # binary (Upgrade, Rollback, ConversionRecord) are in publication-6, the one
-# group that fetches it. Every group checks that the six lists together are
+# group that fetches it. The manual-run and publication-alert tests are publication-7 to publication-9. Every group checks that the nine lists together are
 # exactly the package's ^TestPublication.*RealDaemons$ tests, each listed
 # once, and that each test of its own list ran and ended exactly once.
 PUBLICATION_GO_TESTS="^TestPublication.*RealDaemons$"
 PUBLICATION_GO_TEST_TIMEOUT="45m"
-PUBLICATION_GROUPS="publication-1 publication-2 publication-3 publication-4 publication-5 publication-6"
+PUBLICATION_GROUPS="publication-1 publication-2 publication-3 publication-4 publication-5 publication-6 publication-7 publication-8 publication-9"
 
 publication_group_tests() {
   case "$1" in
@@ -654,6 +654,9 @@ publication_group_tests() {
     publication-4) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationCursorRefusedRealDaemons TestPublicationStreamSlotsRealDaemons" ;;
     publication-5) echo "TestPublicationSubscriptionsUnreadableRealDaemons TestPublicationSubscriptionUnknownFieldRealDaemons TestPublicationSubscriptionFilterValueRealDaemons TestPublicationFollowBackoffRealDaemons TestPublicationHoldBackoffRealDaemons TestPublicationDiskFloorRealDaemons TestPublicationInterruptedCrashBoundRealDaemons" ;;
     publication-6) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons TestPublicationRollbackRealDaemons TestPublicationConversionRecordRealDaemons TestPublicationRestartStreamedPNMRealDaemons TestPublicationDeferredWaitBoundRealDaemons TestPublicationInterruptedPartsRealDaemons" ;;
+    publication-7) echo "TestPublicationManualRunOutlivesClientRealDaemons TestPublicationManualRunCancelByIDRealDaemons TestPublicationManualRunStopsWithNodeRealDaemons TestPublicationManualRunBoundRealDaemons TestPublicationAlertRestartRealDaemons TestPublicationAlertFailureDuringClearRealDaemons" ;;
+    publication-8) echo "TestPublicationAlertOtherBatchNoCreditRealDaemons TestPublicationAlertRetractedLaneRealDaemons TestPublicationAlertVerifyCheckErrorRealDaemons TestPublicationAlertGainedAfterFailureRealDaemons TestPublicationAlertStaysWhenLaterRunsCarryItRealDaemons TestPublicationAlertPartialFailureRealDaemons" ;;
+    publication-9) echo "TestPublicationAlertBatchGainedRecordsRealDaemons TestPublicationAlertHeadPublicationRealDaemons TestPublicationAlertSupersededBatchRealDaemons TestPublicationAlertRecordsDuringPublicationRealDaemons TestPublicationAlertCheckCostRealDaemons" ;;
   esac
 }
 

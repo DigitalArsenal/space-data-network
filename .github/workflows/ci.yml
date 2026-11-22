@@ -503,7 +503,7 @@ jobs:
           name: update-channel-logs-${{ matrix.group }}
           path: .ci-artifacts/update-channel-logs
 
-  # Six groups by test name, at most 7 tests each (scripts/ci-local.sh
+  # Nine groups by test name, at most 7 tests each (scripts/ci-local.sh
   # publication_group_tests): run 44031044072 ran all ten tests in one binary
   # and hit go test's 50m panic in the tenth, and run 45007978545 reached the
   # 45m budget in a group of eleven tests of 231 to 301s. At about 300s a
@@ -522,7 +522,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [publication-1, publication-2, publication-3, publication-4, publication-5, publication-6]
+        group: [publication-1, publication-2, publication-3, publication-4, publication-5, publication-6, publication-7, publication-8, publication-9]
     env:
       SDN_CI_PUBLICATION_GROUP: ${{ matrix.group }}
     steps:

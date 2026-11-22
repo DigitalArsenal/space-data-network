@@ -1390,6 +1390,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// new series (stack #980).
 				publicationService.ResumeIPNSPointers(time.Minute)
 				publicationService.SetAlerts(n.Alerts())
+				// The publication_failed alerts the last run stopped with.
+				publicationService.RestorePublicationAlerts()
 				publications = publicationService
 				// Publications the last process ended during, or refused
 				// while it stopped: read now, before any flow can start a
@@ -3091,9 +3093,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
+	trialDone := make(chan struct{})
 	go resumeInterruptedPublicationsWhenReady(ctx, publications, readiness)
 	if trialUpdateID != "" && homePaths.IsHome() {
-		go watchTrial(ctx, homePaths, trialUpdateID, readiness)
+		go func() {
+			defer close(trialDone)
+			watchTrial(ctx, homePaths, trialUpdateID, readiness)
+		}()
+	} else {
+		close(trialDone)
+	}
+	if publications != nil {
+		// The checks of the failed batches the last run stopped with read the
+		// store: they start once the node is ready and an update's trial is
+		// over, so they delay neither.
+		go startPublicationAlertChecksWhenReady(ctx, publications, readiness, trialDone)
 	}
 
 	// Wait for shutdown signal
@@ -3150,7 +3164,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// forever for in-flight handlers. On a box where a single store read can
 	// queue for tens of seconds behind the engine lock, one slow request held
 	// the whole shutdown. Bound it, then force the sockets closed.
-	// Running dataset publications are cancelled and waited for first: they
+	// Manual runs of schedules are cancelled first, and every request
+	// waiting on one is released (plugins.StopManualRuns): a run-now request
+	// would otherwise hold the admin server for its whole shutdown bound. A
+	// run that has not ended by then is waited for in the node's drain.
+	if mgr := n.PluginManager(); mgr != nil {
+		manualCtx, cancelManual := context.WithTimeout(context.Background(), manualRunStopTimeout)
+		mgr.StopManualRuns(manualCtx)
+		cancelManual()
+	}
+	// Running dataset publications are cancelled and waited for next: they
 	// write to the store, and the requests waiting on them then answer.
 	if publications != nil {
 		publicationsCtx, cancelPublications := context.WithTimeout(context.Background(), publicationStopTimeout)
@@ -3320,12 +3343,15 @@ const (
 // TimeoutStopSec (90s on this fleet) so the daemon decides how it dies and
 // leaves evidence, rather than being SIGKILLed with an empty journal.
 //
+//	manualRunStopTimeout    — manual runs of schedules, once cancelled; their
+//	                          waiting requests are released after it.
 //	publicationStopTimeout  — running dataset publications, once cancelled.
 //	httpShutdownTimeout     — graceful drain of the three HTTP listeners.
 //	nodeDrainTimeout        — background goroutines (n.wg) after n.cancel().
-//	shutdownWatchdogTimeout — total budget; must exceed the three above plus
+//	shutdownWatchdogTimeout — total budget; must exceed the four above plus
 //	                          store/engine teardown, and stay under 90s.
 const (
+	manualRunStopTimeout    = 5 * time.Second
 	publicationStopTimeout  = 10 * time.Second
 	httpShutdownTimeout     = 15 * time.Second
 	nodeDrainTimeout        = 30 * time.Second
@@ -5421,24 +5447,7 @@ func handleModuleRuntimeMutation(mgr *plugins.Manager) http.HandlerFunc {
 				return
 			}
 			if strings.HasSuffix(key, "/run") {
-				if r.Method != http.MethodPost {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-					return
-				}
-				methodID := strings.TrimSuffix(key, "/run")
-				input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
-				if err != nil {
-					http.Error(w, "invalid schedule input: "+err.Error(), http.StatusBadRequest)
-					return
-				}
-				run, err := mgr.RunRuntimeModuleScheduleNowWithInput(r.Context(), moduleID, methodID, input)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Cache-Control", "no-cache")
-				_ = json.NewEncoder(w).Encode(run)
+				handleModuleScheduleRun(w, r, mgr, moduleID, strings.TrimSuffix(key, "/run"))
 				return
 			}
 			if r.Method != http.MethodPatch && r.Method != http.MethodPost {

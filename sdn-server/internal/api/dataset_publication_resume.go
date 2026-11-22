@@ -73,7 +73,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spacedatanetwork/sdn-server/internal/ops"
 	"github.com/spacedatanetwork/sdn-server/internal/publicationstate"
 	"github.com/spacedatanetwork/sdn-server/internal/publicationstate/pst"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -450,28 +449,76 @@ func (s *ConcreteDatasetPublicationService) outdatedMark(ctx context.Context, m 
 
 // reportRedo reports a failure of a mark's publication that no run of this
 // process reports: the run the process ended during, or giving up on it.
+//
+// The run it reports has no start or hold stamp (readStamp 0), so the failed
+// scope it records is covered by any completed publication of the same scope
+// in this process, the redo's own included (dataset_publication_alert.go).
 func (s *ConcreteDatasetPublicationService) reportRedo(req DatasetPublicationRequest, since time.Time, step string, cause error) {
-	s.reportDatasetPublication(req, s.now().Sub(since), nil, atPublicationStep(step, cause), false)
+	s.reportDatasetPublication(req, &publicationRun{started: since}, nil, atPublicationStep(step, cause), false)
 }
 
-// clearRedoReport clears what reportRedo and the failed attempts raised for
-// req's scope.
-func (s *ConcreteDatasetPublicationService) clearRedoReport(req DatasetPublicationRequest) {
-	lane := datasetPublicationLaneName(req)
-	if left := s.runs.coverScope(lane, strings.TrimSpace(req.BatchID)); left == 0 {
-		s.alerts.Clear(ops.KindPublicationFailed, lane)
+// clearSupersededReport removes the failed scope of req's batch, its row and
+// any check of it, when a newer batch of its snapshot lane superseded it: the
+// batch is not published again, so no check of it decides anything (a check
+// would find its records unpublished and keep the alert raised). It is the
+// scope an interrupted run's report, a failed attempt to publish it again or
+// an earlier failure of the batch recorded, in this process or in the last
+// one (RestorePublicationAlerts). It reports whether a scope was removed. A
+// batch beyond maxFailedBatchesPerLane failed into the lane's overflow scope,
+// which stays until a publication of the whole lane completes.
+func (s *ConcreteDatasetPublicationService) clearSupersededReport(req DatasetPublicationRequest, lane string) bool {
+	if s.runs == nil {
+		return false
 	}
+	batch, op := failedOperation(req)
+	key := failedScopeKey{batch, op}
+	st := &s.runs.alert
+	st.persist.Lock()
+	defer st.persist.Unlock()
+	st.mu.Lock()
+	la := st.lanes[lane]
+	_, had := la.scopesOrNil()[key]
+	if op == opBatch {
+		// A check of the batch that runs now decides nothing, and a queued
+		// one finds neither a scope nor a publication to verify (as
+		// laneRetracted does).
+		ck := checkKey{lane, batch}
+		if pending := st.pending[ck]; pending != nil {
+			pending.verify = nil
+		}
+		if st.checking == ck {
+			st.event(ck)
+		} else {
+			delete(st.events, ck)
+		}
+	}
+	if had {
+		delete(la.scopes, key)
+		log.Infof("Dataset publication %s: failed scope %q of batch %q is removed: a newer batch of the lane superseded it, and it is not published again", lane, key.op, key.batch)
+		s.restateOrClearLocked(lane, la, "", fmt.Sprintf("batch %q is superseded", batch))
+	}
+	st.mu.Unlock()
+	// The row goes also when a completed publication of the whole batch
+	// removed the scope in memory and kept the row for its check.
+	s.deleteScopeRows(lane, []failedScopeKey{key})
+	return had
 }
 
-// dropMark removes the mark of req, which is not published again for reason,
-// and clears its report as interrupted when this start made one.
+// dropMark removes the mark of req, which is not published again for reason.
+// When a newer batch superseded it, its failed scope goes with it
+// (clearSupersededReport). Otherwise its failed scope, if any, stays to the
+// alert's own rules: a check of the batch removes it once the batch is
+// published as it is now, or holds no records.
 func (s *ConcreteDatasetPublicationService) dropMark(req DatasetPublicationRequest, reason string, superseded, reported bool) {
 	lane, batch := datasetPublicationLaneName(req), strings.TrimSpace(req.BatchID)
 	s.runs.unmark(req)
 	cleared := ""
-	if reported {
-		s.clearRedoReport(req)
-		cleared = "; its report as interrupted is cleared"
+	if superseded {
+		if s.clearSupersededReport(req, lane) {
+			cleared = "; its report as interrupted is cleared"
+		}
+	} else if reported {
+		cleared = "; its report as interrupted stays until a check of the batch finds it published"
 	}
 	if superseded {
 		log.Warnf("Dataset publication %s batch %q is NOT published again: %s. Its mark is removed%s", lane, batch, reason, cleared)
@@ -546,9 +593,9 @@ func (s *ConcreteDatasetPublicationService) resumePublication(ctx context.Contex
 			return true
 		}
 		if err == nil {
-			// Also a completion with no records (its batch was retired
-			// meanwhile), which clears no alert by itself.
-			s.clearRedoReport(req)
+			// The run's report removed the interrupted report's scope (also
+			// for a completion with no records) and queued the check of the
+			// batch against what it exported.
 			return true
 		}
 		if PublicationRefusedForRestart(err) {

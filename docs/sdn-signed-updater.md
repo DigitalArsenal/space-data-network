@@ -69,7 +69,9 @@ An interrupted run is reported as failed at the step "interrupted by the
 node's stop" before it is published again, which raises the alert; the
 report is cleared when the publication completes or when its mark is dropped
 because the lane has moved on
-(`sdn-server/internal/api/dataset_publication_resume.go`).
+(`sdn-server/internal/api/dataset_publication_resume.go`). Like any failed
+publication it is a failed scope in the store, so a restart before then raises
+the alert again (`sdn-server/internal/api/dataset_publication_alert.go`).
 
 The helper adds the daemon's `waitBeforeStopSeconds` to its graceful-stop
 grace, at most one hour; a larger value is clamped and printed as

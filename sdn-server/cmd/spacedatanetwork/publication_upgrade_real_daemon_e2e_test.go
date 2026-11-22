@@ -154,11 +154,16 @@ func TestPublicationUpgradeRealDaemons(t *testing.T) {
 	newPub := p.publish(t, "OMM.fbs", "upg-new", "n1")
 	r0.awaitRecords(t, "OMM.fbs", "upg-new", p.scan(t, "OMM.fbs", "upg-new"), 6*time.Minute)
 	r0.requirePublication(t, "upg-new", newPub)
+	// The refusal is logged when the publication's gossip reaches the
+	// updated receiver, which on a loaded runner can be later than the
+	// control's import (run 45024240128: not within 20 s).
+	for refused := time.Now().Add(3 * time.Minute); !strings.Contains(readFileString(r.logPath), "does not subscribe to that lane"); time.Sleep(time.Second) {
+		if time.Now().After(refused) {
+			t.Fatal("the updated receiver's log has no refusal of the unsubscribed lane")
+		}
+	}
 	time.Sleep(20 * time.Second)
 	r.requireRecords(t, "OMM.fbs", "upg-new", map[string]int{})
-	if !strings.Contains(readFileString(r.logPath), "does not subscribe to that lane") {
-		t.Fatal("the updated receiver's log has no refusal of the unsubscribed lane")
-	}
 	t.Log("old path gone: the 1.1.9 control imports lane upg-new through its feed head; the updated receiver, not subscribed, imports nothing")
 
 	// 3. The producer updated too.
