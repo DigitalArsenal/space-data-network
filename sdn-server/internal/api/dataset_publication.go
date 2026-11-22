@@ -234,6 +234,12 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		log.Warnf("dataset publication: the answer keeps the server's write timeout (%v)", err)
 	}
 	result, err := h.service.PublishDatasetUpdate(r.Context(), req)
+	if PublicationRefusedForRestart(err) {
+		// The node is stopping or restarting for an update: retryable.
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -361,6 +367,10 @@ func NewConcreteDatasetPublicationService(
 	ipfsAPIURL string,
 	outputDir string,
 ) *ConcreteDatasetPublicationService {
+	runs := newPublicationRuns()
+	if dir := strings.TrimSpace(outputDir); dir != "" {
+		runs.marks = filepath.Join(dir, publicationRunsDir)
+	}
 	return &ConcreteDatasetPublicationService{
 		store:          store,
 		publisher:      publisher,
@@ -371,7 +381,7 @@ func NewConcreteDatasetPublicationService(
 		outputDir:      strings.TrimSpace(outputDir),
 		now:            func() time.Time { return time.Now().UTC() },
 		hygiene:        newPublicationHygiene(),
-		runs:           newPublicationRuns(),
+		runs:           runs,
 	}
 }
 
@@ -466,6 +476,21 @@ func (s *ConcreteDatasetPublicationService) publishSelectedDatasetUpdate(ctx con
 	}
 	defer release()
 	s.runs.markHeld(runOf(ctx))
+	if mark, redo := redoMarkOf(ctx); redo {
+		// A redo of a mark checks it again once it holds the lane: a
+		// publication of another batch that held the lane while this one
+		// waited for it may have published newer data (outdatedMark).
+		reason, superseded, err := activeService.outdatedMark(ctx, mark)
+		if err != nil {
+			return nil, atPublicationStep("check the lane's newest series", err)
+		}
+		if reason != "" {
+			return nil, &redoOutdatedError{lane: datasetPublicationLaneName(activeReq), batch: strings.TrimSpace(activeReq.BatchID), reason: reason, superseded: superseded}
+		}
+	}
+	if publicationLaneHeld != nil {
+		publicationLaneHeld(ctx, activeReq)
+	}
 	if at, retracted, err := activeStore.DatasetPublicationLaneRetractedAt(storage.DatasetPublicationLane{SchemaName: schema, ProviderID: activeReq.ProviderID, SourceName: activeReq.SourceName}); err != nil {
 		return nil, atPublicationStep("check retraction", err)
 	} else if retracted {

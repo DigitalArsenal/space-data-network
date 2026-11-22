@@ -872,6 +872,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}
 		heldDaemonLock = lock
 	}
+	// A wait for publications before an update's stop that a previous
+	// process recorded ended with that process.
+	if homePaths.Root != "" {
+		if err := sdnupdate.ClearStopWait(homePaths); err != nil {
+			log.Warnf("Remove the recorded wait of a previous process: %v", err)
+		}
+	}
 	sdnupdate.OnRestartForUpdate(func() {
 		select {
 		case updateShutdown <- struct{}{}:
@@ -1386,6 +1393,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// The publication_failed alerts the last run stopped with.
 				publicationService.RestorePublicationAlerts()
 				publications = publicationService
+				// Publications the last process ended during, or refused
+				// while it stopped: read now, before any flow can start a
+				// publication, and published again once the node is ready
+				// (resumeInterruptedPublicationsWhenReady).
+				publicationService.ReadInterruptedPublications()
 				// What publications that did not complete before the last
 				// stop left in the publication directory.
 				go publicationService.SweepPublicationFiles()
@@ -1765,6 +1777,15 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if layout.Root != "" {
 				adminMux.Handle("/api/v1/admin/update/shutdown", sdnupdate.NewControlHandler(sdnupdate.ControlHandlerOptions{
 					BundleRoot: layout.Root,
+					// The helper is told how long the daemon waits for its
+					// running publications (awaitPublicationsForUpdate).
+					Prepare: func() (int, time.Duration) {
+						running := publications.HoldPublications()
+						if running == 0 {
+							return 0, 0
+						}
+						return running, updatePublicationWait
+					},
 					Shutdown: func() {
 						select {
 						case updateShutdown <- struct{}{}:
@@ -3073,6 +3094,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	n.StartBackgroundEngineHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
 	trialDone := make(chan struct{})
+	go resumeInterruptedPublicationsWhenReady(ctx, publications, readiness)
 	if trialUpdateID != "" && homePaths.IsHome() {
 		go func() {
 			defer close(trialDone)
@@ -3104,6 +3126,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		log.Infof("Received %s (signal %d; the sender is not known; this daemon's parent process is %d)", sig, number, os.Getppid())
 	case <-updateShutdown:
 		log.Info("Update shutdown requested")
+		awaitPublicationsForUpdate(publications, homePaths, sigChan)
 		if homePaths.IsHome() {
 			execAfterDaemon = &homeRestart{argv: homePaths.RestartArgv(os.Args), homeRoot: homePaths.Root}
 		}
@@ -3334,6 +3357,82 @@ const (
 	nodeDrainTimeout        = 30 * time.Second
 	shutdownWatchdogTimeout = 75 * time.Second
 )
+
+// updatePublicationWait bounds how long a restart for an update waits, before
+// the shutdown above begins, for the dataset publications that run when the
+// update asks the daemon to stop (stack issue 1044). A catalog publication
+// takes 4 to 10 minutes on the production publisher; the auto-publisher
+// bounds one attempt at the same 30 minutes. A publication still running at
+// the bound is stopped with the node and published again at the next start.
+const updatePublicationWait = 30 * time.Minute
+
+// awaitPublicationsForUpdate refuses new dataset publications and waits, at
+// most updatePublicationWait or until a signal arrives, for the running ones
+// to finish. While it waits, updates/stop-wait.json says so.
+func awaitPublicationsForUpdate(publications *api.ConcreteDatasetPublicationService, paths sdnupdate.Paths, signals <-chan os.Signal) {
+	running := publications.HoldPublications()
+	if running == 0 {
+		return
+	}
+	since := time.Now()
+	if paths.Root != "" {
+		from, until := sdnupdate.StopWaitTimes(since, updatePublicationWait)
+		if err := sdnupdate.WriteStopWait(paths, sdnupdate.StopWait{For: sdnupdate.StopWaitPublications, Running: running, PID: os.Getpid(), Since: from, Until: until}); err != nil {
+			log.Warnf("Update shutdown: the wait could not be recorded for status: %v", err)
+		}
+		defer func() {
+			if err := sdnupdate.ClearStopWait(paths); err != nil {
+				log.Warnf("Update shutdown: remove the recorded wait: %v", err)
+			}
+		}()
+	}
+	// Logged after the wait is recorded for status.
+	log.Warnf("Update shutdown: waiting up to %s for %d running dataset publication(s) to finish before stopping; new publications are refused until the restart",
+		updatePublicationWait, running)
+	ctx, cancel := context.WithTimeout(context.Background(), updatePublicationWait)
+	defer cancel()
+	go func() {
+		select {
+		case sig := <-signals:
+			log.Warnf("Received %s while waiting for dataset publications: stopping now", sig)
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	took := func() time.Duration { return time.Since(since).Round(time.Millisecond) }
+	if left := publications.AwaitPublications(ctx); left > 0 {
+		log.Warnf("Update shutdown: %d dataset publication(s) still running after %s; they stop with the node and are published again at the next start", left, took())
+		return
+	}
+	log.Infof("Update shutdown: every running dataset publication finished after %s", took())
+}
+
+// resumeInterruptedPublicationsWhenReady publishes again, once the node
+// answers ready, the publications the last process did not complete
+// (ResumeInterruptedPublications). Readiness does not depend on them, so they
+// never hold up /ready or an update's health gate; and they do not start
+// before it, so a publication that ends the process cannot keep a new build
+// from answering ready. Without an admin listener (readiness nil) nothing
+// can ask, and they start at once.
+func resumeInterruptedPublicationsWhenReady(ctx context.Context, publications *api.ConcreteDatasetPublicationService, readiness func(context.Context) string) {
+	if publications == nil {
+		return
+	}
+	for readiness != nil {
+		probeCtx, cancel := context.WithTimeout(ctx, readyProbeTimeout+time.Second)
+		reason := readiness(probeCtx)
+		cancel()
+		if reason == "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+	publications.ResumeInterruptedPublications(ctx)
+}
 
 // defaultAdminWriteTimeout bounds writing one admin response.
 const defaultAdminWriteTimeout = 10 * time.Minute

@@ -23,6 +23,60 @@ outside the replaceable bundle and service cgroup; for one it cannot write,
 the daemon installs into its account's home and restarts itself through the
 installed path, with no helper (below).
 
+**Running dataset publications finish first** (stack issue 1044). When an
+update asks the daemon to stop (the helper's shutdown handshake, or a home
+bundle's restart), the daemon refuses every new dataset publication and
+waits, at most 30 minutes, for the running ones to finish; only then does its
+shutdown begin. A request for a publication that already runs still waits for
+it; a new one answers HTTP 503 with `Retry-After`. The handshake's answer
+states `runningPublications` and `waitBeforeStopSeconds`; the helper records
+`stop-waits-for-publications` in the deploy ledger, prints `daemon_stop_wait=`, and waits that
+much longer for the daemon's pid to exit before it escalates. While the daemon
+waits, `updates/stop-wait.json` says so and `spacedatanetwork status` prints
+`update_stop_wait=dataset-publications running=<n> pid=<pid> since=<time>
+until=<time>`. A signal during the wait ends it.
+
+A publication of a lane or a batch (with every other request field at its
+default) that is still running at the bound, or that any stop or crash ends,
+keeps a mark in the publication directory's `publication-runs` folder. So
+does one refused while the node stops: during an update's wait, and during
+any other stop (an operator's restart, a reboot); such a refusal answers HTTP
+503 with `Retry-After` (before, a refusal during a stop answered 400). Once
+the next start answers ready, the node handles the marks one at a time,
+reading one row of the store per mark and no record. What it reads depends on
+the lane's kind (`publishing.retention.lanes[].snapshot_batches`):
+
+- on a snapshot lane (each batch a complete snapshot, such as a GP pull) the
+  marks are handled newest first, and the row is the lane's newest series. If
+  it started at or after the publication was requested, the publication is
+  not published again: of the same batch, it completed; of another batch, the
+  lane has newer data, and publishing the older batch would move the lane's
+  newest series and IPNS pointer back to it. The same check is made again
+  once the publication holds its lane, since another batch may have been
+  publishing while it waited for the lane;
+- on any other lane the batches are parts of one dataset, each published
+  once (the cellular chunk lane): the marks are handled oldest first, in the
+  order the parts were requested, and the row is the newest series of the
+  mark's own batch. Only that batch's own completed publication removes the
+  mark; a later part does not;
+- a mark older than 24 hours is removed and not published;
+- otherwise it is published again, at most 3 attempts in all across starts
+  (counted in the mark before each attempt starts); after the third the node
+  reports it FAILED at the step "publish again after the node's stop", the
+  lane's `publication_failed` alert stays raised, and the mark is removed.
+
+An interrupted run is reported as failed at the step "interrupted by the
+node's stop" before it is published again, which raises the alert; the
+report is cleared when the publication completes or when its mark is dropped
+because the lane has moved on
+(`sdn-server/internal/api/dataset_publication_resume.go`). Like any failed
+publication it is a failed scope in the store, so a restart before then raises
+the alert again (`sdn-server/internal/api/dataset_publication_alert.go`).
+
+The helper adds the daemon's `waitBeforeStopSeconds` to its graceful-stop
+grace, at most one hour; a larger value is clamped and printed as
+`daemon_stop_wait_clamped`.
+
 This path is implemented in Go (`sdn-server/internal/update/`,
 `sdn-server/internal/node/update_signal.go`). The `packages/sdn-updater-module`
 WASM package contains stub methods and does not drive updates. Besides acting

@@ -9,6 +9,8 @@ umask so the file is never readable by others.
 
 ---
 
+**An update's restart no longer cuts a dataset publication short.** Before it stops for an update the node finishes the publications that are running, for at most 30 minutes, and refuses new ones meanwhile; `spacedatanetwork status` prints `update_stop_wait=` while it waits. A publication refused because the node is stopping, for an update or any other stop, answers HTTP 503 with `Retry-After` (it answered 400). A lane or batch publication that a stop or a crash ends anyway, or that was refused while the node stopped, is published again once the next start is ready, unless it is older than 24 hours or, on a snapshot lane (`snapshot_batches`), its lane has published another batch since it was requested (checked again once the publication holds its lane). On any other lane, whose batches are parts each published once, every marked part is published again, oldest first. It is tried at most 3 times across starts, then reported failed, and the lane's alert stays raised until the batch is published. An interrupted one is first reported as failed at the step "interrupted by the node's stop", which raises the lane's `publication_failed` alert until it completes, so an operator's restart during a publication raises the alert for the minutes the publication takes again. The update helper waits that much longer for the daemon to exit, adding at most one hour to its stop grace whatever the daemon states.
+
 **Linux: a fresh node gets its key password file automatically.** The Linux
 kernel makes `/sys/class/dmi/id/product_uuid` readable only by root, so on
 most Linux machines a node that does not run as root cannot derive its

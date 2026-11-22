@@ -999,6 +999,25 @@ func declaresRollback(m *update.Manifest) bool {
 	return m.Provenance != nil && m.Provenance.Lineage == update.LineageRollback
 }
 
+// maxPublicationStopWait bounds what the daemon's handshake answer
+// (waitBeforeStopSeconds) adds to the graceful-stop grace. The daemon sends
+// its publication wait, 30 minutes; a larger value is a daemon bug, and the
+// helper still escalates the stop of a daemon that never exits.
+const maxPublicationStopWait = time.Hour
+
+// publicationStopWait is what the daemon's waitBeforeStopSeconds adds to the
+// graceful-stop grace: 0 for a missing, zero or negative value, at most
+// maxPublicationStopWait (clamped reports that the value was larger).
+func publicationStopWait(seconds int64) (wait time.Duration, clamped bool) {
+	if seconds <= 0 {
+		return 0, false
+	}
+	if seconds > int64(maxPublicationStopWait/time.Second) {
+		return maxPublicationStopWait, true
+	}
+	return time.Duration(seconds) * time.Second, false
+}
+
 // stopServingDaemon asks the daemon to shut down and waits for its pid to
 // exit (update.StopLadder). It returns an error, with nothing swapped, when
 // the daemon answered but would not stop, or did not exit through every rung.
@@ -1029,6 +1048,24 @@ func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version strin
 	}
 	daemon = servingDaemon{PID: answer.PID, RestartArgv: answer.RestartArgv, Supervised: answer.Supervised}
 	fmt.Fprintf(o.Out, "daemon_shutdown=requested pid=%d supervised=%t\n", daemon.PID, daemon.Supervised)
+	// The daemon finishes the dataset publications that run before it begins
+	// its shutdown: its graceful stop is given that much longer.
+	bounds := o.Stop
+	if wait, clamped := publicationStopWait(answer.WaitBeforeStopSeconds); wait > 0 {
+		if bounds.Grace <= 0 {
+			bounds.Grace = update.DefaultStopGrace
+		}
+		bounds.Grace += wait
+		if clamped {
+			fmt.Fprintf(o.Err, "daemon_stop_wait_clamped reported_seconds=%d at_most=%s\n", answer.WaitBeforeStopSeconds, wait)
+		}
+		fmt.Fprintf(o.Out, "daemon_stop_wait=dataset-publications running=%d at_most=%s\n", answer.RunningPublications, wait)
+		// The daemon has accepted the stop: the ledger line is reported if it
+		// cannot be written, not obeyed.
+		o.recordAfter("stop-waits-for-publications", answer.PID, version, fmt.Sprintf(
+			"the daemon finishes its %d running dataset publication(s) before it stops, for at most %s, and accepts no new one meanwhile",
+			answer.RunningPublications, wait))
+	}
 	if daemon.Supervised {
 		daemon.Supervisor = o.Supervisor(ctx, daemon.PID)
 		if daemon.Supervisor != nil {
@@ -1043,7 +1080,7 @@ func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version strin
 		Version:  version,
 		PID:      daemon.PID,
 		How:      "update shutdown handshake",
-		Bounds:   o.Stop,
+		Bounds:   bounds,
 		Out:      o.Out,
 	}
 	if sup := daemon.Supervisor; sup != nil {
