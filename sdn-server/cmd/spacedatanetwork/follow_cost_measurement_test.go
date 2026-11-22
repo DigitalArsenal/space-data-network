@@ -107,6 +107,14 @@ func TestFollowCostMeasurement(t *testing.T) {
 	began := time.Now()
 	producer.start(t)
 	logf("producer ready in %s on a copy of %s, binary %s, pid %d", time.Since(began).Round(time.Second), src, exe, producer.cmd.Process.Pid)
+	if os.Getenv("SDN_FOLLOW_COST_PRODUCER_BACKGROUND") == "1" {
+		// A slower host: the producer runs at macOS's background policy
+		// (efficiency cores, throttled disk reads).
+		if out, err := exec.Command("taskpolicy", "-b", "-p", strconv.Itoa(producer.cmd.Process.Pid)).CombinedOutput(); err != nil {
+			t.Fatalf("taskpolicy: %v: %s", err, out)
+		}
+		logf("producer at the background policy")
+	}
 	// SDN_FOLLOW_COST_FOLLOWER_BINARY runs the follower on another build
 	// (a release before the producer's, or after it).
 	followerExe := exe

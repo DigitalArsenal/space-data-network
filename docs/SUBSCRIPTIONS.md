@@ -194,10 +194,13 @@ statement, a followed page, a batch's list, records by content address)
 runs under its stream: when the follower resets the stream or the
 connection ends, the producer's store read stops. Each read has a bound (a
 statement, a batch's list and a fetch by content address 1 minute, a
-followed page 2 minutes), past which the producer answers `busy`. At most 4
-such reads of one peer and 16 in all run at once; one past them is refused
-`busy` at once, except a page of a stream already open, which waits for its
-turn within its bound.
+followed page and any other `read-chunk` scan 2 minutes), past which the
+producer answers `busy`. At most 2 reads of other peers run at once (the
+store engine serves reads on 4 interactive lanes and 1 bulk lane, so the
+node's own reads, such as its publications' window probes and fingerprint
+scans, always have lanes of their own; ingest is written apart from every
+read). A statement past that is refused `busy` at once; a page, a list or a
+scan waits for its turn within its bound.
 
 A follower waits up to 5 minutes for a statement and for each page. After a
 stream that delivered no page it waits before opening the stream again: 1

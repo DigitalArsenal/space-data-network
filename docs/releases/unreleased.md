@@ -87,10 +87,13 @@ wears its producer down.** Since 1.1.10 a subscription to a lane starts with
 the producer's statement of the lane. On a format 5 store the producer read
 every record of the lane twice to answer it whenever the lane holds more
 than one batch (a keep-all catalog lane of millions of records), so on the
-catalog node the statement outlasted the follower's 60 s wait. The follower
-asked again 30 s later while the producer went on reading for the stream it
-had reset, and those reads piled up until the producer answered no follower
-at all, small lanes included. This release fixes both sides:
+catalog node each read took 1 to 3 minutes and the statement outlasted the
+follower's 60 s wait. The follower asked again 30 s later while the producer
+went on reading for the stream it had reset. Those reads held the store
+engine's read lanes, so everything else queued behind them for minutes: the
+followers' small lanes never got a first page, and the node's own catalog
+publication failed at the engine's 5-minute request deadline. This release
+fixes both sides:
 
 - The producer answers a statement from its counters (the standard's newest
   sequence and the counters of the lane's batches), without reading the
@@ -101,8 +104,13 @@ at all, small lanes included. This release fixes both sides:
 - Every read a follower asks for runs under its stream and stops when the
   follower resets the stream or the connection ends. Each has a bound (a
   statement 1 minute, a followed page 2 minutes), past which the producer
-  answers `busy`, and at most 4 such reads of one peer and 16 in all run at
-  once; one past them is refused `busy` at once.
+  answers `busy`.
+- Other peers' reads can no longer starve the node's own publication. The
+  store engine serves reads on 4 interactive lanes and 1 bulk lane; at most
+  2 reads of other peers now run at once, and a follower's batch list no
+  longer runs on the bulk lane, so the node's own window probes and
+  fingerprint scans always have lanes of their own. A statement past the
+  limit is refused `busy` at once; other reads wait their turn.
 - The follower waits up to 5 minutes for a statement or a page, and after a
   stream that delivered nothing waits 1 s, then twice as long after each
   failure, up to 20 minutes (with 20% jitter), starting again at 1 s once a
