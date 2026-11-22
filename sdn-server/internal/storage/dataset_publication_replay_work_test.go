@@ -108,7 +108,7 @@ func newReplayWorkFixture(t *testing.T, n int) *replayWorkFixture {
 	}
 }
 
-func (f *replayWorkFixture) fetchBytes(_ context.Context, cid string) ([]byte, error) {
+func (f *replayWorkFixture) fetchBytes(_ context.Context, cid string, _ int64) ([]byte, error) {
 	data, ok := f.objects[cid]
 	if !ok {
 		return nil, os.ErrNotExist
@@ -196,7 +196,7 @@ func TestMaterializeDatasetPublicationImportOutlivesItsFetchBudget(t *testing.T)
 		PNM:               f.pnm,
 		ProviderPublicKey: f.publicKey,
 		FetchByCID:        f.fetchBytes,
-		FetchByCIDToFile: func(_ context.Context, cid, path string) error {
+		FetchByCIDToFile: func(_ context.Context, cid, path string, _ int64) error {
 			probe := make(chan struct{})
 			go func() {
 				release := f.consumer.lockWrite("test: store lock during the fetch")
@@ -270,7 +270,7 @@ func TestMaterializeDatasetPublicationImportStopsWhenItsContextEnds(t *testing.T
 		PNM:               f.pnm,
 		ProviderPublicKey: f.publicKey,
 		FetchByCID:        f.fetchBytes,
-		FetchByCIDToFile: func(_ context.Context, cid, path string) error {
+		FetchByCIDToFile: func(_ context.Context, cid, path string, _ int64) error {
 			return f.writeObject(cid, path)
 		},
 		FetchBudget: time.Minute,
@@ -301,7 +301,7 @@ func TestMaterializeDatasetPublicationFetchStaysWithinItsBudget(t *testing.T) {
 		PNM:               f.pnm,
 		ProviderPublicKey: f.publicKey,
 		FetchByCID:        f.fetchBytes,
-		FetchByCIDToFile: func(ctx context.Context, cid, path string) error {
+		FetchByCIDToFile: func(ctx context.Context, cid, path string, _ int64) error {
 			if err := os.WriteFile(path, []byte("partial"), 0o600); err != nil {
 				return err
 			}
@@ -342,7 +342,7 @@ func TestMaterializeDatasetPublicationSkipsAShardTheFeedHeadPathImported(t *test
 			PNM:               f.pnm,
 			ProviderPublicKey: f.publicKey,
 			FetchByCID:        f.fetchBytes,
-			FetchByCIDToFile: func(_ context.Context, cid, path string) error {
+			FetchByCIDToFile: func(_ context.Context, cid, path string, _ int64) error {
 				fileFetches[cid]++
 				return f.writeObject(cid, path)
 			},

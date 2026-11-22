@@ -9,6 +9,13 @@ umask so the file is never readable by others.
 
 ---
 
+**A publication is held to the sizes its signed manifest states, and three smaller fixes to subscriptions.**
+
+- A `$PNM` publication's shard and index are fetched up to the bytes its manifest states and no further. An index that lists more records than stated stores none. A manifest that states no records, or a shard of 0 bytes, is refused. Such a publication raises the alert `publication_misstated` on the lane, naming both figures, and is not fetched again.
+- A stated size that no disk can hold stops the lane (`follow_stopped`) without overflowing the reservation all lanes share.
+- A subscription whose `SYNC_FILTER` this build cannot read is refused alone (alert `subscription_refused`); the other lanes run, and the refused record is written back byte for byte.
+- After a restart a lane's publications wait at most 5 minutes for its stream, whatever else runs the catch-up.
+
 **Linux: a fresh node gets its key password file automatically.** The Linux
 kernel makes `/sys/class/dmi/id/product_uuid` readable only by root, so on
 most Linux machines a node that does not run as root cannot derive its

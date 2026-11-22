@@ -73,7 +73,7 @@ func TestRetainedCatalogSignedPublicationLoopback(t *testing.T) {
 		body, err := io.ReadAll(r.Body)
 		if err == nil {
 			_, err = storage.MaterializeDatasetPublication(r.Context(), consumer, storage.DatasetPublicationReplayOptions{
-				PNM: body, ProviderPublicKey: trusted, FetchByCID: fetch, WorkDir: filepath.Join(root, "replay"),
+				PNM: body, ProviderPublicKey: trusted, FetchByCID: func(ctx context.Context, id string, _ int64) ([]byte, error) { return fetch(ctx, id) }, WorkDir: filepath.Join(root, "replay"),
 			})
 		}
 		if err != nil {
@@ -162,7 +162,7 @@ func TestRetainedCatalogSignedPublicationLoopback(t *testing.T) {
 	tampered := false
 	_, err = storage.MaterializeDatasetPublication(ctx, rejected, storage.DatasetPublicationReplayOptions{
 		PNM: good, ProviderPublicKey: trusted, WorkDir: filepath.Join(root, "tampered"),
-		FetchByCID: func(ctx context.Context, id string) ([]byte, error) {
+		FetchByCID: func(ctx context.Context, id string, _ int64) ([]byte, error) {
 			data, err := fetch(ctx, id)
 			if err == nil && id == result.ShardCID {
 				data = bytes.Clone(data)

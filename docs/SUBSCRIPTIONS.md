@@ -107,7 +107,15 @@ the most bytes one page can hold, 8 MiB): a page that would leave less than
 take the records the node holds past `subscriptions.record_ceiling`, is not
 stored. A lane's `$PNM` publications are imported under the same check,
 for the records the signed manifest states and the shard's bytes, before
-the shard is fetched. What the other lanes are storing at the same time
+the shard is fetched; a stated size no disk can hold (past 2^62 bytes of
+store) stops the lane like any other. The stated sizes also bound the
+import: the shard and the index are fetched up to the bytes the manifest
+states and no further, an index listing more records than it states stores
+none, and a manifest stating no records or a shard or index of 0 bytes is
+refused before the fetch. Such a publication raises the alert
+`publication_misstated` on the lane, naming the publication, the producer
+and both figures, and is recorded as a permanent error (not fetched again).
+What the other lanes are storing at the same time
 counts against both: the lanes and the publication imports share one
 reservation, released when each store returns, also when it fails. The
 lane stops, its cursor kept; `sync subscriptions` shows why (`stopped`) and
@@ -131,7 +139,8 @@ start, until `sync subscribe --start beginning` (same lane and producer)
 reads the whole lane again or `sync subscribe --acknowledge-unread` accepts
 the gap. A lane subscribed from its beginning stays in `follows.dss`
 meanwhile. `sync unsubscribe` clears the lane's alerts (`follow_cursor_refused`,
-`follow_stopped`, `follow_refused`, `subscription_refused`).
+`follow_stopped`, `follow_refused`, `subscription_refused`,
+`publication_misstated`).
 
 A lane whose stream is connected does not import its `$PNM` publications
 (their records arrive on the stream) once the batch the producer states is
@@ -142,7 +151,9 @@ starts (a restart, a new subscription), until its stream has held the
 stated batch or failed to, and for at most 5 minutes, a publication waits:
 the stored-`$PNM` catch-up takes it up again as soon as the stream settles,
 so a batch the stream holds again after a restart is not imported a second
-time.
+time. The 5 minutes count from the lane's start: a catch-up runs when they
+end, whatever else ran it in between, so a lane whose stream never connects
+imports its waiting publication 5 minutes after it starts.
 
 So a followed lane's node holds its records but not its publications' files
 (the producer's signed manifests, shards and indexes). A node whose readers
@@ -219,11 +230,14 @@ subscriptions. A file whose read fails (permission, an I/O error) is left
 where it is: the node stays so, the alert names the error, and the next
 start that reads the file loads it.
 
-A subscription whose `SYNC_FILTER` names a field this build does not know
-(written by a later version, then rolled back) is not run: the alert
-`subscription_refused` names the lane and the field, the lane is neither
-followed nor imported, and its record is written back as it was read. The
-other lanes run. To subscribe the lane again with this build, unsubscribe it
+A subscription whose `SYNC_FILTER` this build cannot read (written by a
+later version, then rolled back) is not run: a field it does not know, a
+value of a known field it does not read (`start=<a later start>`), or a
+filter that does not parse. The alert `subscription_refused` names the lane
+and the field or the filter, the lane is neither followed nor imported, and
+its record is written back byte for byte as each file held it (its status,
+times, rates and `ERROR` included; the refusal is in the alert and in `sync
+subscriptions`, not in the file). The other lanes run. To subscribe the lane again with this build, unsubscribe it
 first.
 
 ## Updating a node from 1.1.9
