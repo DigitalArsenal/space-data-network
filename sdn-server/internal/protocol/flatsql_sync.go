@@ -395,6 +395,12 @@ func writeBatchCIDPage(w io.Writer, store *storage.FlatSQLStore, req syncRequest
 // followed read of the lane (the query a subscriber's followed request
 // names: the lane, no batch, no profile), so a follow opened there sends
 // only what is stored after it.
+//
+// On a format 5 store every figure comes from maintained counters (the type
+// summary and the lane counters), never from reading the lane's records, so
+// a statement costs the lane's batches, not its records: the batch's and
+// the lane's records and bytes are the sums of their tag instances' counters
+// (storage.LaneTotals; a record in two of the lane's batches counts in each).
 func writeLaneStatement(w io.Writer, store *storage.FlatSQLStore, query datasync.QueryRequest) error {
 	follow := datasync.QueryRequest{Schema: query.Schema, ProviderID: query.ProviderID, SourceName: query.SourceName}
 	boundary, err := store.RecordSequenceHead(datasync.FilterFromRequest(follow, 0, 0))
@@ -403,20 +409,24 @@ func writeLaneStatement(w io.Writer, store *storage.FlatSQLStore, query datasync
 	}
 	stmt := laneStatement(store, follow)
 	st := syncwire.LaneStatement{FollowStatement: stmt, ResumeCursor: datasync.ResumeCursorAt(store, follow, boundary)}
+	totals := func(batch string) (int64, int64, error) {
+		records, bytes, err := store.LaneTotals(follow.Schema, follow.ProviderID, follow.SourceName, batch)
+		if !errors.Is(err, storage.ErrFollowLaneUnsupported) {
+			return records, bytes, err
+		}
+		q := follow
+		q.BatchID = batch
+		records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(q, 0, 0))
+		return records, head.TotalBytes, err
+	}
 	if stmt.BatchID != "" {
-		batch := follow
-		batch.BatchID = stmt.BatchID
-		records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(batch, 0, 0))
-		if err != nil {
+		if st.Records, st.BatchBytes, err = totals(stmt.BatchID); err != nil {
 			return err
 		}
-		st.Records, st.BatchBytes = records, head.TotalBytes
 	}
-	records, head, err := store.RawRecordSnapshot(datasync.FilterFromRequest(follow, 0, 0))
-	if err != nil {
+	if st.LaneRecords, st.LaneBytes, err = totals(""); err != nil {
 		return err
 	}
-	st.LaneRecords, st.LaneBytes = records, head.TotalBytes
 	_, err = w.Write(syncwire.StatementPage(syncwire.QRPFields{SchemaName: follow.Schema, ProviderID: follow.ProviderID, SourceName: follow.SourceName,
 		GeneratedAtMs: time.Now().UnixMilli()}, st))
 	return err

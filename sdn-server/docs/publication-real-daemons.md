@@ -359,6 +359,35 @@ next start after the permission is back loads it.
 `subscription_refused` (lane and field), imports nothing and is written back
 as it was; the other lane keeps importing; unsubscribed, its alert clears.
 
+`TestPublicationSubscriptionFilterValueRealDaemons`: a `SYNC_FILTER` whose
+known field holds a value this build does not read, beside an unknown field
+(`start=from-the-next-batch&x=1`), refuses only that subscription
+(`subscription_refused`); the file is not moved aside and the other lane
+keeps importing.
+
+`TestPublicationRefusedSubscriptionKeptRealDaemons`: a refused subscription
+whose record carries a status, a last synced time, an `ERROR`, rates and
+times is in `subscriptions.dss` byte for byte as it was after the file is
+written again (the other lane's cursor moved); the refusal shows in `sync
+subscriptions`, not in the file.
+
+`TestPublicationMisstatedSizesRealDaemons` (a producer built with the tag
+`sdn_e2e_follow_faults`, whose "overstate-", "understate-bytes-" and
+"understate-records-" lanes' manifests state a shard of
+3,689,348,814,741,910,324 bytes, half the shard's bytes, or one record fewer
+than the shard holds): of four publication-only lanes (OEM) the honest one
+imports; the overstated one stops at the running guard (`follow_stopped`
+naming the stated size) and the understated ones raise
+`publication_misstated` naming both figures; none of their records is stored,
+also after a restart and its catch-up.
+
+`TestPublicationDeferredWaitBoundRealDaemons` (a receiver of that build, whose
+"never-" lane opens no stream and whose "late270-" lane opens its first stream
+270 s after it starts): the "never-" lane's publication waits for its stream
+and is imported within 5 minutes and 50 s of the lane's start, although the
+"late270-" lane's settled stream ran the catch-up and reset its timer to its
+5-minute interval at about 270 s.
+
 `TestPublicationStorePanicReleasesReservationRealDaemons` (a receiver built
 with the tag `sdn_e2e_follow_faults`, or `SDN_E2E_PUBLICATION_FOLLOW_FAULTS_BINARY`):
 the stores of two lanes panic, on followed pages and on fetches by CID; after

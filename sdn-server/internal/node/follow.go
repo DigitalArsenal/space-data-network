@@ -104,6 +104,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -186,8 +187,29 @@ const (
 	followDiskReserve    = 1 << 30
 )
 
-// followStatementWait bounds one read of a producer's statement.
-const followStatementWait = 60 * time.Second
+// followStatementWait bounds one read of a producer's statement: long
+// enough for a producer before 1.1.13, whose statement reads every record of
+// the lane twice and goes on after the reader gives up, to answer once
+// instead of being asked again (a producer from 1.1.13 answers from its
+// counters).
+const followStatementWait = 5 * time.Minute
+
+// The wait before a failed followed stream is opened again: it doubles from
+// followBackoffMin after each connection that delivered no page, up to
+// followBackoffMax, each wait drawn within followBackoffJitter of it, and
+// starts again at followBackoffMin after a connection that delivered a page.
+// A busy refusal is waited at least its retry hint.
+var (
+	followBackoffMin    = time.Second
+	followBackoffMax    = 20 * time.Minute
+	followBackoffJitter = 0.2
+)
+
+// followBackoffWait is the wait drawn for backoff.
+func followBackoffWait(backoff time.Duration) time.Duration {
+	f := 1 + followBackoffJitter*(2*rand.Float64()-1)
+	return time.Duration(float64(backoff) * f)
+}
 
 // FollowKey names one followed lane.
 type FollowKey struct {
@@ -310,6 +332,10 @@ type FollowStatus struct {
 	// inOldFile that followFileName held it at load.
 	filter    string
 	inOldFile bool
+	// raw and oldRaw are a refused subscription's records as read from
+	// subscriptionsFileName and followFileName: written back byte for
+	// byte (every field: status, times, rates, its ERROR), never re-encoded.
+	raw, oldRaw []byte
 }
 
 // inFollowFile reports a subscription followFileName holds: one that starts
@@ -360,6 +386,9 @@ type followEntry struct {
 	settled  bool
 	started  time.Time
 	deferred bool
+	// waitNudge is set once a run of the catch-up is asked for at the end
+	// of followPublicationWait (followManager.nudgeAt).
+	waitNudge bool
 }
 
 // followPublicationWait bounds the wait of a lane's publications for its
@@ -562,14 +591,23 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 		if st.Schema == "" || st.Producer == "" || !d.SUBSCRIBED() {
 			continue
 		}
+		// A SYNC_FILTER this build cannot interpret (a field it does not
+		// know, a value of a known field it does not read, a query that does
+		// not parse) refuses that subscription only: a later version may
+		// have written it, and the file's other lanes run.
 		var unknown *followFilterUnknownError
 		if err := parseFollowFilter(string(d.SYNC_FILTER()), &st); errors.As(err, &unknown) {
 			st.Refused = fmt.Sprintf("this build does not run the subscription: its SYNC_FILTER (in %s) names %s, which this build does not know (a later version wrote it); the lane is not followed and its publications are not imported, and the record is kept as it is",
 				filepath.Base(path), unknown.names())
-			st.filter = string(d.SYNC_FILTER())
 		} else if err != nil {
-			return nil, fmt.Errorf("%s %w: subscription %s %s/%s from %s: %w", path, errFollowFileDecode, st.Schema, st.ProviderID, st.SourceName, st.Producer, err)
+			st.Refused = fmt.Sprintf("this build does not run the subscription: its SYNC_FILTER (in %s) does not read in this build (%v; a later version may have written it); the lane is not followed and its publications are not imported, and the record is kept as it is",
+				filepath.Base(path), err)
 		}
+		if st.Refused != "" {
+			st.filter = string(d.SYNC_FILTER())
+		}
+		// The record as read: load keeps it for a refused subscription.
+		st.raw = slices.Clone(frame)
 		if ms := d.LAST_SYNC_STARTED_AT(); ms > 0 {
 			st.Since = time.UnixMilli(int64(min(ms, uint64(1<<62))))
 		}
@@ -747,6 +785,7 @@ func (m *followManager) load() error {
 	}
 	for _, st := range old {
 		st.inOldFile = true
+		st.oldRaw = st.raw
 		i, held := index[st.FollowKey]
 		if !held {
 			index[st.FollowKey] = len(subs)
@@ -754,6 +793,7 @@ func (m *followManager) load() error {
 			continue
 		}
 		subs[i].inOldFile = true
+		subs[i].oldRaw = st.raw
 		if subs[i].inFollowFile() && st.Cursor != "" {
 			subs[i].Cursor = st.Cursor
 		}
@@ -763,6 +803,10 @@ func (m *followManager) load() error {
 	for _, st := range subs {
 		if _, held := m.subs[st.FollowKey]; held {
 			continue
+		}
+		if st.Refused == "" {
+			// Only a refused subscription is written back as read.
+			st.raw, st.oldRaw = nil, nil
 		}
 		if st.Refused != "" {
 			m.keepRefusedLocked(st)
@@ -1052,7 +1096,7 @@ func (m *followManager) Follow(key FollowKey, on bool) error {
 		<-e.done
 		// What was raised about the lane goes with it.
 		subject := followAlertSubject(e.status.FollowKey)
-		for _, kind := range []string{ops.KindFollowCursorRefused, ops.KindFollowStopped, ops.KindFollowRefused, ops.KindSubscriptionRefused} {
+		for _, kind := range []string{ops.KindFollowCursorRefused, ops.KindFollowStopped, ops.KindFollowRefused, ops.KindSubscriptionRefused, ops.KindPublicationMisstated} {
 			m.n.alerts.Clear(kind, subject)
 		}
 	}
@@ -1129,9 +1173,32 @@ func (n *Node) followPublication(from peer.ID, schema, providerID, sourceName st
 		return followPublicationStreamed
 	case !e.settled && time.Since(e.started) < followPublicationWait:
 		e.deferred = true
+		if !e.waitNudge {
+			// The catch-up runs again when the wait ends, whatever else
+			// moved its timer: a nudge from another lane resets it to its
+			// interval, and the bound is followPublicationWait.
+			e.waitNudge = true
+			n.follows.nudgeAt(key, e, followPublicationWait-time.Since(e.started))
+		}
 		return followPublicationDeferred
 	}
 	return followPublicationImport
+}
+
+// nudgeAt asks the stored-$PNM catch-up to run after d, when lane key is
+// still e, its publications still wait and its stream has not settled.
+func (m *followManager) nudgeAt(key FollowKey, e *followEntry, d time.Duration) {
+	time.AfterFunc(max(d, 0), func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.subs[key] != e || !e.deferred || e.settled {
+			return
+		}
+		select {
+		case m.catchupNudge <- struct{}{}:
+		default:
+		}
+	})
 }
 
 // errGossipRecordNoLane is why a record gossiped on a schema topic is not
@@ -1186,8 +1253,11 @@ func (m *followManager) startLocked(st FollowStatus) {
 }
 
 // run follows one lane until ctx ends, reconnecting after a failure. The
-// wait before a reconnect doubles up to 30 s and starts again at 1 s after a
-// connection that delivered a page.
+// wait before a reconnect doubles from followBackoffMin up to
+// followBackoffMax (with jitter) and starts again after a connection that
+// delivered a page: a producer that cannot answer a lane is not asked again
+// every minute and a half for as long as it cannot, and the lane's $PNM
+// publications import meanwhile.
 func (m *followManager) run(ctx context.Context, e *followEntry) {
 	if followStartDelay != nil {
 		m.mu.Lock()
@@ -1199,16 +1269,20 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		case <-time.After(followStartDelay(source)):
 		}
 	}
-	backoff := time.Second
+	backoff := followBackoffMin
 	for ctx.Err() == nil {
 		pages, err := m.followGuarded(ctx, e)
 		if ctx.Err() != nil {
 			return
 		}
 		if pages > 0 {
-			backoff = time.Second
+			backoff = followBackoffMin
 		}
-		wait := backoff
+		wait := followBackoffWait(backoff)
+		var remote *syncwire.RemoteError
+		if errors.As(err, &remote) && remote.Code == "busy" {
+			wait = max(wait, time.Duration(remote.RetryAfterMs)*time.Millisecond)
+		}
 		stopped := errors.Is(err, errFollowStopped)
 		if stopped {
 			wait = followStoppedWait
@@ -1250,7 +1324,7 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 			return
 		case <-time.After(wait):
 		}
-		backoff = min(backoff*2, 30*time.Second)
+		backoff = min(backoff*2, followBackoffMax)
 	}
 }
 
@@ -1973,9 +2047,22 @@ func (m *followManager) recordCeiling() int64 {
 // record ceiling. The caller calls the release it returns once the store has
 // returned (the records stored are then counted as held, addHeld). A
 // refusal is errFollowStopped.
+//
+// No figure in it overflows: a size (records, bytes) is refused before it is
+// multiplied or added when it passes followReserveLimit (bytes: that limit
+// divided by followStoreExpansion), and every sum is checked against
+// followReserveLimit by subtraction first, so the reservation counters stay
+// between 0 and followReserveLimit.
 func (m *followManager) reserve(records int, bytes int64) (func(), error) {
-	if records <= 0 {
+	switch {
+	case records < 0 || bytes < 0:
+		return nil, fmt.Errorf("%w: %d records of %d bytes is not a size to store", errFollowStopped, records, bytes)
+	case records == 0:
 		return func() {}, nil
+	case int64(records) > followReserveLimit:
+		return nil, fmt.Errorf("%w: %d records is more than any store here holds", errFollowStopped, records)
+	case bytes > followReserveLimit/followStoreExpansion:
+		return nil, fmt.Errorf("%w: %d bytes stated needs more than %d bytes of disk to store, more than any disk here holds", errFollowStopped, bytes, followReserveLimit)
 	}
 	dir := m.storeDir()
 	free, freeErr := storage.FreeDiskBytes(dir)
@@ -1983,18 +2070,23 @@ func (m *followManager) reserve(records int, bytes int64) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("records held here: %w", err)
 	}
-	ceiling := m.recordCeiling()
+	held = min(max(held, 0), followReserveLimit)
+	ceiling := min(max(m.recordCeiling(), 0), followReserveLimit)
 	storeBytes := bytes * followStoreExpansion
 	m.heldMu.Lock()
 	defer m.heldMu.Unlock()
+	if storeBytes > followReserveLimit-followDiskReserve-m.reserveBytes {
+		return nil, fmt.Errorf("%w: storing %d more records (%d bytes) beside the %d bytes the followed lanes are storing needs more than %d bytes of disk, more than any disk here holds",
+			errFollowStopped, records, bytes, m.reserveBytes, followReserveLimit)
+	}
 	if freeErr == nil {
 		need := m.reserveBytes + storeBytes + followDiskReserve
-		if int64(min(free, uint64(1<<62))) < need {
+		if int64(min(free, uint64(followReserveLimit))) < need {
 			return nil, fmt.Errorf("%w: storing %d more records (%d bytes) needs about %d bytes of free disk under %s (1 GiB to spare, and %d bytes the followed lanes are storing), and %d are free",
 				errFollowStopped, records, bytes, need, dir, m.reserveBytes, free)
 		}
 	}
-	if held+m.reserveRecords+int64(records) > ceiling {
+	if int64(records) > ceiling-held-m.reserveRecords {
 		return nil, fmt.Errorf("%w: this node holds %d records, its followed lanes are storing %d, and %d more would pass its ceiling of %d (subscriptions.record_ceiling)",
 			errFollowStopped, held, m.reserveRecords, records, ceiling)
 	}
@@ -2004,12 +2096,18 @@ func (m *followManager) reserve(records int, bytes int64) (func(), error) {
 	return func() {
 		once.Do(func() {
 			m.heldMu.Lock()
-			m.reserveBytes -= storeBytes
-			m.reserveRecords -= int64(records)
+			m.reserveBytes = max(m.reserveBytes-storeBytes, 0)
+			m.reserveRecords = max(m.reserveRecords-int64(records), 0)
 			m.heldMu.Unlock()
 		})
 	}, nil
 }
+
+// followReserveLimit bounds every figure of the running guard's
+// reservation (records, store bytes, and their sums with what is held and
+// reserved): far above any disk or store, and far below where an int64
+// overflows.
+const followReserveLimit = int64(1) << 62
 
 // publicationStopped reports a publication of a subscribed lane that the
 // running guard did not import (alert follow_stopped, the lane stopped); the
@@ -2027,6 +2125,20 @@ func (m *followManager) publicationStopped(key FollowKey, fileID string, err err
 	m.mu.Unlock()
 	log.Warnf("Subscribed lane %s %s/%s from %s: %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, text)
 	m.n.alerts.Raise(ops.KindFollowStopped, followAlertSubject(key), ops.SeverityError, text)
+}
+
+// publicationMisstated reports a publication of a subscribed lane whose
+// signed DPM states sizes it does not keep (alert publication_misstated on
+// the lane, naming the publication, the producer and both figures). It is
+// a fault of that publication, not a stop of the lane.
+func (m *followManager) publicationMisstated(key FollowKey, from peer.ID, fileID string, err error) {
+	if m == nil || key.Schema == "" {
+		return
+	}
+	key = normalizeFollowKey(key)
+	text := fmt.Sprintf("publication %s from %s not imported: %v", fileID, from, err)
+	log.Warnf("Subscribed lane %s %s/%s from %s: %s", key.Schema, key.ProviderID, key.SourceName, key.Producer, text)
+	m.n.alerts.Raise(ops.KindPublicationMisstated, followAlertSubject(key), ops.SeverityError, text)
 }
 
 // publicationImported counts the records a publication of a subscribed lane
@@ -2122,6 +2234,16 @@ func (m *followManager) save() error {
 	}
 	var all, beginning bytes.Buffer
 	for _, st := range m.Statuses() {
+		if st.Refused != "" {
+			// As read, byte for byte: the record from subscriptionsFileName
+			// (or, for one only followFileName held, that one), and in
+			// followFileName that file's record.
+			all.Write(firstFrame(st.raw, encodeFollowDSS(st, true)))
+			if st.inFollowFile() {
+				beginning.Write(firstFrame(st.oldRaw, st.raw, encodeFollowDSS(st, false)))
+			}
+			continue
+		}
 		all.Write(encodeFollowDSS(st, true))
 		if st.inFollowFile() {
 			beginning.Write(encodeFollowDSS(st, false))
@@ -2131,6 +2253,16 @@ func (m *followManager) save() error {
 		return err
 	}
 	return writeFileAtomic(m.subsPath, all.Bytes())
+}
+
+// firstFrame is the first of frames that is not empty.
+func firstFrame(frames ...[]byte) []byte {
+	for _, f := range frames {
+		if len(f) > 0 {
+			return f
+		}
+	}
+	return nil
 }
 
 func writeFileAtomic(path string, data []byte) error {

@@ -5534,6 +5534,9 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 // (MAX(rowid) is one b-tree seek), or the record backend's boundary for the
 // filter's remaining range.
 func (s *FlatSQLStore) RecordSequenceHead(filter RawRecordQuery) (int64, error) {
+	if b, ok := s.rb.(format4Backend); ok {
+		return b.recordSequenceHead(filter)
+	}
 	if s.rb != nil {
 		filter.UseRowIDCursor = true
 		head, err := s.rb.RawRecordHead(filter)
