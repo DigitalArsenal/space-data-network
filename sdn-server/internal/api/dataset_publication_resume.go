@@ -12,9 +12,11 @@ package api
 // So every publication of a lane or of one batch, with every other request
 // field at its default (the request a flow's IngestResult makes, and the
 // auto-publisher's for a lane with no shard size of its own), keeps a durable
-// mark while it runs: a $BatchAction FlatBuffer in the publication directory's
-// publication-runs folder, action "publish", with the time the publication was
-// requested and the number of attempts made to publish it again. The mark is
+// mark while it runs: a $PMK FlatBuffer (PublicationMark.fbs; not
+// PublicationState.fbs, whose hash every publication manifest signs) in the
+// publication directory's publication-runs folder, action "publish", with the
+// time the publication was requested and the number of attempts made to
+// publish it again. The mark is
 // removed when the run completes or fails, and kept when the node's stop
 // cancels it or the process ends. A request refused because the node is
 // stopping (for an update or any other stop) leaves a mark too, action
@@ -74,7 +76,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/publicationstate"
-	"github.com/spacedatanetwork/sdn-server/internal/publicationstate/pst"
+	"github.com/spacedatanetwork/sdn-server/internal/publicationstate/pmk"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -207,10 +209,10 @@ func (r *publicationRuns) writeMark(m publicationMark, replace bool) bool {
 		}
 	}
 	req := markRequest(m.req)
-	raw := publicationstate.Encode(&pst.BodyT{Type: pst.BodyBatchAction, Value: &pst.BatchActionT{
+	raw := publicationstate.EncodeMark(&pmk.PublicationMarkT{
 		Schema: req.Schema, Provider: req.ProviderID, Source: req.SourceName, Batch: req.BatchID, Action: m.action,
 		Started: m.started.UnixNano(), Attempts: int32(m.attempts),
-	}})
+	})
 	if err := writeFileDurably(path, raw); err != nil {
 		log.Warnf("Dataset publication %s batch %q: its mark could not be written, so the next start does not publish it if the process ends first: %v",
 			datasetPublicationLaneName(req), req.BatchID, err)
@@ -282,11 +284,10 @@ func (r *publicationRuns) readMark(path string) (publicationMark, error) {
 	if err != nil {
 		return publicationMark{}, err
 	}
-	body, err := publicationstate.Decode(raw, pst.BodyBatchAction)
+	action, err := publicationstate.DecodeMark(raw)
 	if err != nil {
 		return publicationMark{}, err
 	}
-	action := body.Value.(*pst.BatchActionT)
 	req := DatasetPublicationRequest{Schema: action.Schema, ProviderID: action.Provider, SourceName: action.Source, BatchID: action.Batch}
 	if !markablePublication(req) || r.markPath(req) != path {
 		return publicationMark{}, fmt.Errorf("it does not name the publication its file name is for")

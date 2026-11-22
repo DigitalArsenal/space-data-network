@@ -12,8 +12,6 @@ type BatchActionT struct {
 	Source   string `json:"source"`
 	Batch    string `json:"batch"`
 	Action   string `json:"action"`
-	Started  int64  `json:"started"`
-	Attempts int32  `json:"attempts"`
 }
 
 func (t *BatchActionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -46,8 +44,6 @@ func (t *BatchActionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	BatchActionAddsource(builder, sourceOffset)
 	BatchActionAddbatch(builder, batchOffset)
 	BatchActionAddaction(builder, actionOffset)
-	BatchActionAddstarted(builder, t.Started)
-	BatchActionAddattempts(builder, t.Attempts)
 	return BatchActionEnd(builder)
 }
 
@@ -57,8 +53,6 @@ func (rcv *BatchAction) UnPackTo(t *BatchActionT) {
 	t.Source = string(rcv.Source())
 	t.Batch = string(rcv.Batch())
 	t.Action = string(rcv.Action())
-	t.Started = rcv.Started()
-	t.Attempts = rcv.Attempts()
 }
 
 func (rcv *BatchAction) UnPack() *BatchActionT {
@@ -165,48 +159,8 @@ func (rcv *BatchAction) Action() []byte {
 	return rcv.action()
 }
 
-func (rcv *BatchAction) started() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *BatchAction) Started() int64 {
-	return rcv.started()
-}
-
-func (rcv *BatchAction) Mutatestarted(n int64) bool {
-	return rcv._tab.MutateInt64Slot(14, n)
-}
-
-func (rcv *BatchAction) MutateStarted(n int64) bool {
-	return rcv.Mutatestarted(n)
-}
-
-func (rcv *BatchAction) attempts() int32 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
-	if o != 0 {
-		return rcv._tab.GetInt32(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *BatchAction) Attempts() int32 {
-	return rcv.attempts()
-}
-
-func (rcv *BatchAction) Mutateattempts(n int32) bool {
-	return rcv._tab.MutateInt32Slot(16, n)
-}
-
-func (rcv *BatchAction) MutateAttempts(n int32) bool {
-	return rcv.Mutateattempts(n)
-}
-
 func BatchActionStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(5)
 }
 func BatchActionAddschema(builder *flatbuffers.Builder, schema flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(schema), 0)
@@ -237,18 +191,6 @@ func BatchActionAddaction(builder *flatbuffers.Builder, action flatbuffers.UOffs
 }
 func BatchActionAddAction(builder *flatbuffers.Builder, action flatbuffers.UOffsetT) {
 	BatchActionAddaction(builder, action)
-}
-func BatchActionAddstarted(builder *flatbuffers.Builder, started int64) {
-	builder.PrependInt64Slot(5, started, 0)
-}
-func BatchActionAddStarted(builder *flatbuffers.Builder, started int64) {
-	BatchActionAddstarted(builder, started)
-}
-func BatchActionAddattempts(builder *flatbuffers.Builder, attempts int32) {
-	builder.PrependInt32Slot(6, attempts, 0)
-}
-func BatchActionAddAttempts(builder *flatbuffers.Builder, attempts int32) {
-	BatchActionAddattempts(builder, attempts)
 }
 func BatchActionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

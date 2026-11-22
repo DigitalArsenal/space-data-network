@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/publicationstate"
-	"github.com/spacedatanetwork/sdn-server/internal/publicationstate/pst"
 )
 
 // publicationMarks reads the marks of d's publication directory: the
@@ -34,11 +33,11 @@ func (d *publicationDaemon) publicationMarks(t *testing.T) map[string]int {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body, err := publicationstate.Decode(raw, pst.BodyBatchAction)
+		mark, err := publicationstate.DecodeMark(raw)
 		if err != nil {
 			t.Fatalf("mark %s: %v", entry.Name(), err)
 		}
-		marks[entry.Name()] = int(body.Value.(*pst.BatchActionT).Attempts)
+		marks[entry.Name()] = int(mark.Attempts)
 	}
 	return marks
 }
