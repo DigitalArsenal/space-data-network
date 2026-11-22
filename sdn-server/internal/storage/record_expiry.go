@@ -65,6 +65,9 @@ func (s *FlatSQLStore) ExpireRecords(q RecordExpiryQuery) (res RecordExpiryResul
 	log.Infof("Record expiry start schema=%q lane=%q/%q before=%d batch=%d limit=%d budget=%s", q.SchemaName, q.ProviderID, q.SourceName, q.BeforeUnix, q.Batch, q.MaxDeletes, q.MaxDuration)
 	defer func() {
 		log.Infof("Record expiry end schema=%q lane=%q/%q deleted=%d missing=%d capped=%t duration=%s error=%v", q.SchemaName, q.ProviderID, q.SourceName, res.Deleted, res.Missing, res.Capped, time.Since(started), err)
+		if res.Deleted > 0 {
+			s.noteLaneRecordsRemoved(q.SchemaName, strings.TrimSpace(q.ProviderID), strings.TrimSpace(q.SourceName))
+		}
 	}()
 	deadline := started.Add(q.MaxDuration)
 	if b, ok := s.rb.(format4Backend); ok {
