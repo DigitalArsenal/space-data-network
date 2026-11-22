@@ -120,7 +120,10 @@ func (s *FlatSQLStore) LaneBatchCIDPage(schemaName, providerID, sourceName, batc
 	if strings.TrimSpace(batchID) == "" {
 		return nil, 0, false, errors.New("a batch's list names the batch")
 	}
-	q := format4.Query{Type: typ, Lane: f4Lane(providerID, sourceName, batchID, "", ""), Order: format4.OrderSeqAsc, Bulk: true,
+	// A list is a follower's read: the interactive class, under the
+	// producer's limit on followers' reads (protocol), so the one bulk
+	// lane stays the node's own (its publications' fingerprint scans).
+	q := format4.Query{Type: typ, Lane: f4Lane(providerID, sourceName, batchID, "", ""), Order: format4.OrderSeqAsc,
 		SeqAfter: afterSeq, Limit: int64(limit)}
 	recs, err := b.d.api().Scan(b.d.ctx, q)
 	if errors.Is(err, format4.ErrNoType) {

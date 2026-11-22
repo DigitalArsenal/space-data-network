@@ -87,14 +87,35 @@ func TestFollowCostMeasurement(t *testing.T) {
 	if out, err := exec.Command("cp", "-c", "-R", src, producer.store).CombinedOutput(); err != nil {
 		t.Fatalf("copy the store: %v: %s", err, out)
 	}
+	// The copied store is past the test config's 32 GB storage limit once
+	// it grows.
+	raw, err := os.ReadFile(producer.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Replace(string(raw), "  max_size: 32GB", "  max_size: 512GB", 1)
+	// The local publisher's quota (100 MB by default) bounds what grows it.
+	cfg = strings.Replace(cfg, "publishing:\n  enabled: true\n", "publishing:\n  enabled: true\n  default_quota_bytes: 200000000000\n", 1)
+	if err := os.WriteFile(producer.cfg, []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
 	pprof := freeLoopbackPort(t)
 	producer.env = append(producer.env, "GOMAXPROCS=4", fmt.Sprintf("SDN_MEASURE_PPROF_ADDR=127.0.0.1:%d", pprof))
+	if ms := os.Getenv("SDN_FOLLOW_COST_SLOW_MS"); ms != "" {
+		producer.env = append(producer.env, "SDN_FLATSQL_SLOW_QUERY_MS="+ms)
+	}
 	began := time.Now()
 	producer.start(t)
 	logf("producer ready in %s on a copy of %s, binary %s, pid %d", time.Since(began).Round(time.Second), src, exe, producer.cmd.Process.Pid)
-	follower := newPublicationDaemon(t, exe, "cost-follower", producer.address, producer.id, "keep-all")
+	// SDN_FOLLOW_COST_FOLLOWER_BINARY runs the follower on another build
+	// (a release before the producer's, or after it).
+	followerExe := exe
+	if v := os.Getenv("SDN_FOLLOW_COST_FOLLOWER_BINARY"); v != "" {
+		followerExe = v
+	}
+	follower := newPublicationDaemon(t, followerExe, "cost-follower", producer.address, producer.id, "keep-all")
 	follower.start(t)
-	logf("follower ready, pid %d", follower.cmd.Process.Pid)
+	logf("follower ready, binary %s, pid %d", followerExe, follower.cmd.Process.Pid)
 
 	pid := producer.cmd.Process.Pid
 	sample := func() followCostSample { return followCostSampleOf(pid, pprof) }
@@ -150,6 +171,20 @@ func TestFollowCostMeasurement(t *testing.T) {
 			if err != nil || status != http.StatusCreated {
 				t.Fatalf("grow batch %d: HTTP %d %v %.300q", b, status, err, raw)
 			}
+			var response struct {
+				Results []struct {
+					CID   string `json:"cid"`
+					Error string `json:"error"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(raw, &response); err != nil {
+				t.Fatalf("grow batch %d: %v", b, err)
+			}
+			for _, r := range response.Results {
+				if r.Error != "" || r.CID == "" {
+					t.Fatalf("grow batch %d: a record was refused: %s", b, r.Error)
+				}
+			}
 			if b%20 == 19 {
 				done := (b + 1) * batch
 				logf("grew the OMM lane by %d records in %s (%.0f records/s)", done, time.Since(began).Round(time.Second), float64(done)/time.Since(began).Seconds())
@@ -181,7 +216,38 @@ func TestFollowCostMeasurement(t *testing.T) {
 		}
 	}
 
+	// publishLane publishes the producer's current batch of the OMM lane,
+	// as its three-hourly catalog flow does, and logs how long it took and
+	// the engine reads logged meanwhile.
+	publishLane := func(label string) {
+		q := url.Values{"schema": {"OMM.fbs"}, "provider_id": {"space-data-network-02"}, "source": {"celestrak-gp"}, "from": {producer.id}, "start": {"current"}}
+		raw, _, _ := followCostRequest(follower, "GET", "/api/v1/sync/plan?"+q.Encode(), "", nil)
+		var plan api.LanePlan
+		_ = json.Unmarshal(raw, &plan)
+		body, _ := json.Marshal(map[string]any{"schema": "OMM.fbs", "providerId": "space-data-network-02", "sourceName": "celestrak-gp",
+			"batchId": plan.BatchID, "chunkSize": 50000, "fullCatalog": true})
+		before := len(readFileString(producer.logPath))
+		asked := time.Now()
+		raw, status, err := followCostRequest(producer, "POST", "/api/v1/admin/dataset-updates/publish", "application/json", body)
+		took := time.Since(asked)
+		ops := slowOperation.FindAllString(readFileString(producer.logPath)[before:], -1)
+		logf("%s: publication of OMM batch %q in %s: HTTP %d %v %.300q; %d engine reads logged", label, plan.BatchID, took.Round(10*time.Millisecond),
+			status, err, raw, len(ops))
+		for _, op := range ops {
+			logf("%s: %s", label, op)
+		}
+	}
+	if strings.Contains(phases, "publish") {
+		publishLane("publication without followers")
+	}
+
 	if strings.Contains(phases, "storm") {
+		if strings.Contains(phases, "stormpublish") {
+			go func() {
+				time.Sleep(5 * time.Minute)
+				publishLane("publication during the storm")
+			}()
+		}
 		before := sample()
 		logf("storm: seven subscriptions for %s; producer before: %s", storm, before)
 		var wg sync.WaitGroup

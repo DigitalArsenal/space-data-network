@@ -79,3 +79,36 @@ whoever ran it, so another local account could choose the config that
 a system account (such as the package's `sdn`) counts now; for another
 account's node, pass `-c`. `install.sh` passes the node's own config to every
 command it runs.
+
+---
+
+**Followed lanes of millions of records start, and a follower no longer
+wears its producer down.** Since 1.1.10 a subscription to a lane starts with
+the producer's statement of the lane. On a format 5 store the producer read
+every record of the lane twice to answer it whenever the lane holds more
+than one batch (a keep-all catalog lane of millions of records), so on the
+catalog node the statement outlasted the follower's 60 s wait. The follower
+asked again 30 s later while the producer went on reading for the stream it
+had reset, and those reads piled up until the producer answered no follower
+at all, small lanes included. This release fixes both sides:
+
+- The producer answers a statement from its counters (the standard's newest
+  sequence and the counters of the lane's batches), without reading the
+  lane's records. The batch's and the lane's records and bytes it states are
+  the sums of those counters, so a record that two batches hold counts in
+  each. A followed stream from a lane's beginning no longer counts the lane
+  first.
+- Every read a follower asks for runs under its stream and stops when the
+  follower resets the stream or the connection ends. Each has a bound (a
+  statement 1 minute, a followed page 2 minutes), past which the producer
+  answers `busy`, and at most 4 such reads of one peer and 16 in all run at
+  once; one past them is refused `busy` at once.
+- The follower waits up to 5 minutes for a statement or a page, and after a
+  stream that delivered nothing waits 1 s, then twice as long after each
+  failure, up to 20 minutes (with 20% jitter), starting again at 1 s once a
+  page arrives. Meanwhile the lane's `$PNM` publications import, as before.
+
+Both sides work with a 1.1.12 node on the other: a 1.1.12 follower gets the
+fast statement and its reset stops the producer's read; a 1.1.12 producer
+gets one statement request at a time per lane, waited for 5 minutes, instead
+of one every 90 s. `docs/SUBSCRIPTIONS.md` has the details.

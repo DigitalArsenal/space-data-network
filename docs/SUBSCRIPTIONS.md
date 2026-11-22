@@ -181,6 +181,31 @@ that producer's own: a run that names another peer as origin or producer is
 refused, so a producer whose stored records name an earlier identity of it
 serves its stream but not its current batch.
 
+What a follower costs its producer: a lane's statement is answered from the
+producer's counters (the standard's newest sequence and the counters of the
+lane's batches), never by reading the lane's records, so it costs the lane's
+batches and not its records. The batch's and the lane's records and bytes it
+states are the sums of those counters: a record that two of the lane's
+batches hold counts in each, and the lane's figure is then more than its
+records (a read from the lane's beginning sends each record once). A
+followed stream from the lane's beginning reads forward from the start
+without counting the lane first. Every read a follower asks for (a
+statement, a followed page, a batch's list, records by content address)
+runs under its stream: when the follower resets the stream or the
+connection ends, the producer's store read stops. Each read has a bound (a
+statement, a batch's list and a fetch by content address 1 minute, a
+followed page 2 minutes), past which the producer answers `busy`. At most 4
+such reads of one peer and 16 in all run at once; one past them is refused
+`busy` at once, except a page of a stream already open, which waits for its
+turn within its bound.
+
+A follower waits up to 5 minutes for a statement and for each page. After a
+stream that delivered no page it waits before opening the stream again: 1
+second, doubling after each such stream up to 20 minutes, each wait drawn
+within 20% of that, and at least the retry hint of a `busy` refusal. A
+stream that delivers a page starts the wait at 1 second again. Meanwhile the
+lane's `$PNM` publications import, as above.
+
 ## Where subscriptions are kept
 
 `subscriptions.dss`, in the directory that holds `storage.path` (beside it, not in it; where 1.1.9 keeps `follows.dss`): one size-prefixed `$DSS` record per lane,
@@ -286,4 +311,4 @@ On the wire, the statement is an unfollowed `read-chunk` naming the lane and
 no batch, with the filter `PROJECTION` = `STATEMENT`; the answer is one `$QRP`
 page with `BATCH_ID`, `TOTAL_COUNT` (the batch's records), `RESUME_CURSOR`
 (the present position) and one row of `BATCH_RECORDS`, `BATCH_BYTES`,
-`LANE_RECORDS`, `LANE_BYTES`.
+`LANE_RECORDS`, `LANE_BYTES` (from the lane counters, as above).

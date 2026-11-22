@@ -370,8 +370,13 @@ func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, p
 		}
 		return h.followReadChunk(ctx, rw, activeStore, query, peerID, req)
 	}
-	page, records, err := datasync.ScanPageContext(ctx, activeStore, query, datasync.MaxSyncChunkLimit)
-	if err != nil {
+	var page *datasync.Page
+	var records []*storage.Record
+	if err := h.boundedWork(ctx, peerID, true, followPageBound, func(read context.Context) error {
+		var err error
+		page, records, err = datasync.ScanPageContext(read, activeStore, query, datasync.MaxSyncChunkLimit)
+		return err
+	}); err != nil {
 		return err
 	}
 	return syncwire.WriteScanPage(w, activeStore, page, records)
@@ -582,8 +587,8 @@ func (h *FlatSQLSyncHandler) followReadChunk(ctx context.Context, s io.ReadWrite
 }
 
 // followPage reads a followed stream's next page into page and records:
-// under a work slot (busy at once for the stream's first page; a later page
-// waits for one), with the stream's context and within followPageBound. A
+// under a work slot (waited for within the bound), with the stream's
+// context and within followPageBound. A
 // stream caught up waits for new records for followQuiet, without a slot,
 // and then answers an empty page.
 func (h *FlatSQLSyncHandler) followPage(stream context.Context, peerID peer.ID, store *storage.FlatSQLStore, query datasync.QueryRequest, first, caughtUp bool,
@@ -593,7 +598,7 @@ func (h *FlatSQLSyncHandler) followPage(stream context.Context, peerID peer.ID, 
 	defer quiet.Stop()
 	for {
 		written := store.WriteSignal(query.Schema)
-		if err := h.boundedWork(stream, peerID, !first, time.Until(bound), func(read context.Context) error {
+		if err := h.boundedWork(stream, peerID, true, time.Until(bound), func(read context.Context) error {
 			var err error
 			*page, *records, err = datasync.ScanPageContext(read, store, query, syncwire.FollowMaxRecords)
 			return err

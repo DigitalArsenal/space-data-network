@@ -19,12 +19,17 @@ import (
 // peer resets the stream or the connection goes, and under a bound shorter
 // than the follower's wait, so a follower is answered (busy) rather than
 // left to give up and ask again. At most followWorkPerPeer of one peer's and
-// followWorkTotal of all peers' such reads run at once; one past them is
-// refused busy at once (a follower backs off), and a followed stream's next
-// page waits for a slot within its bound.
+// followWorkTotal of all peers' such reads run at once; a statement past
+// them is refused busy at once (a follower backs off), and a page, a list or
+// a scan waits for a slot within its bound. The store engine serves reads on
+// 4 interactive lanes and 1 bulk lane: with at most 2 of the interactive
+// lanes and none of the bulk lane taken by remote peers, a node's own reads
+// (its publications' window probes and fingerprint scans, its API) always
+// have lanes of their own. Writes (ingest) run on the engine's writer
+// threads, apart from every read.
 const (
-	followWorkPerPeer = 4
-	followWorkTotal   = 16
+	followWorkPerPeer = 2
+	followWorkTotal   = 2
 )
 
 var (

@@ -75,8 +75,8 @@ func TestPublicationFollowStatementCostRealDaemons(t *testing.T) {
 // reads for 10 minutes (sdn_e2e_follow_faults): a follower that gives up
 // after 5 s resets the stream and the producer's read stops then, not
 // after its 10 minutes; of six such statements asked at once by one peer,
-// two past the four a peer may have running are refused busy at once and
-// the other four are answered busy at the producer's 1-minute bound (the
+// four past the two a peer may have running are refused busy at once and
+// the other two are answered busy at the producer's 1-minute bound (the
 // follower waits 5 minutes); after them a lane's statement is answered.
 func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
@@ -104,7 +104,7 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 		t.Fatalf("the statement of slow-reset answered HTTP %d before its 10 minutes", res.StatusCode)
 	}
 	cancel()
-	reset := regexp.MustCompile(`read-chunk OMM(?:\.fbs)? publication-e2e/slow-reset from \S+: the peer reset the stream after ([0-9.]+m?s)`)
+	reset := regexp.MustCompile(`read-chunk OMM(?:\.fbs)? publication-e2e/slow-reset from .+?: the peer reset the stream after ([0-9.]+m?s)`)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if m := reset.FindStringSubmatch(readFileString(a.logPath)); m != nil {
@@ -154,8 +154,8 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 			t.Errorf("slow-busy-%d answered in %s: %q", i, ans.took, ans.plan.StatementError)
 		}
 	}
-	if refused != 2 || bounded != 4 {
-		t.Fatalf("of six statements at once %d were refused at once and %d answered at the bound; want 2 and 4", refused, bounded)
+	if refused != 4 || bounded != 2 {
+		t.Fatalf("of six statements at once %d were refused at once and %d answered at the bound; want 4 and 2", refused, bounded)
 	}
 	if plan := b.plan(t, a, "work"); plan.StatementError != "" || plan.BatchID != "w1" || plan.BatchRecords != 10 {
 		t.Fatalf("statement after the slow ones: batch %q %d records, error %q", plan.BatchID, plan.BatchRecords, plan.StatementError)
