@@ -503,11 +503,13 @@ jobs:
           name: update-channel-logs-${{ matrix.group }}
           path: .ci-artifacts/update-channel-logs
 
-  # Four groups by test name (scripts/ci-local.sh publication_group_tests):
-  # run 44031044072 ran all ten tests in one binary and hit go test's 50m
-  # panic in the tenth. Each group is about 1,000s of runner time against a
-  # 45m go test budget; the 60m job limit leaves setup and linking time for
-  # that budget to name an overrun.
+  # Nine groups by test name, at most 7 tests each (scripts/ci-local.sh
+  # publication_group_tests): run 44031044072 ran all ten tests in one binary
+  # and hit go test's 50m panic in the tenth, and run 45007978545 reached the
+  # 45m budget in a group of eleven tests of 231 to 301s. At about 300s a
+  # test a group is about 35 minutes against the 45m go test budget; the 60m
+  # job limit leaves setup and linking time for that budget to name an
+  # overrun. publication-6 holds the tests that need the 1.1.9 release.
   publication-e2e:
     name: Publication E2E (real daemons / ${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -520,7 +522,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [publication-1, publication-2, publication-3, publication-4, publication-5, publication-6]
+        group: [publication-1, publication-2, publication-3, publication-4, publication-5, publication-6, publication-7, publication-8, publication-9]
     env:
       SDN_CI_PUBLICATION_GROUP: ${{ matrix.group }}
     steps:

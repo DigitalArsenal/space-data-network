@@ -440,7 +440,7 @@ sdn-js: `encodeQrpScanRequest`, `decodeQrpScanStream`, `decodeQrpIndexPage` and
 
 ### Subscribing to a lane (importing from another node)
 
-A node imports only the lanes it subscribes to (1.2.0). As an operator agent,
+A node imports only the lanes it subscribes to (1.1.10). As an operator agent,
 use the commands (they sign in with the node's root key and take `--json`):
 
 ```bash
@@ -464,9 +464,19 @@ ceiling; `--force` subscribes anyway). Over HTTP (admin): `GET
 /api/v1/sync/plan`, `POST /api/v1/sync` with a `$DSS` Subscribe naming
 `PROVIDER_PEER_ID` (`?start=current|beginning`, `?force=1`; 202, or 409
 `first_read_refused`; `?acknowledge_unread=1` on an existing subscription
-clears its `unread`), `GET /api/v1/sync/subscriptions`. The anonymous `GET
-/api/v1/sync` `$DSS` of a followed lane reads `SUBSCRIBED` and `SYNC_PROTOCOL`
-`flatsql-sync read-chunk follow`. Details: `docs/SUBSCRIPTIONS.md`.
+clears its `unread`; `?publications=keep|stream|only`), `GET
+/api/v1/sync/subscriptions`. The anonymous `GET /api/v1/sync` `$DSS` of a
+followed lane reads `SUBSCRIBED` and `SYNC_PROTOCOL` `flatsql-sync read-chunk
+follow`. `producer_lane_records` in the plan counts batch memberships (a
+record two batches hold counts in each), not distinct records.
+
+`sync subscribe --publications only` (`?publications=only`, no `start`)
+imports the lane from the producer's signed publications alone: no stream,
+no statement, no first read; the producer is asked nothing for the lane.
+`--json` prints `{"subscribed":true,"publications_only":true,...}`, and the
+lane lists with `"publications_only":true`; its `$DSS` reads `SYNC_PROTOCOL`
+`dataset publications ($PNM)`. Use it for a large keep-all lane of a producer
+that publishes it. Details: `docs/SUBSCRIPTIONS.md`.
 
 
 ### Querying records

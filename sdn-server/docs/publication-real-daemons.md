@@ -303,7 +303,7 @@ arrives.
 
 `TestPublicationUpgradeRealDaemons` needs `SDN_E2E_V119_BINARY` (a build of
 tag v1.1.9; `./scripts/ci-local.sh publication` downloads the published
-archive for groups `all` and `publication-4`). On 1.1.9 a receiver imports
+archive for groups `all` and `publication-6`). On 1.1.9 a receiver imports
 two lanes through `peers.trusted_import` and its ledger; updated alone, it
 converts them to subscriptions kept in `subscriptions.dss` (not in
 `follows.dss`, which 1.1.9 reads), leaves the ledger in place, loses no
