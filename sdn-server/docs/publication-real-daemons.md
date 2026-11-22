@@ -128,14 +128,30 @@ the interrupted run and its redo; deciding to redo it reads no record) and
 the lane's `publication_failed` alert is clear once it completes; a further
 restart publishes nothing again.
 
-`TestPublicationInterruptedSupersededRealDaemons` interrupts the publication
-of a 150,000-record batch, then starts the producer from a build
-(`sdn_e2e_follow_faults`) that handles the mark of a `lateredo-` lane 60 s
-after it is ready, publishes a newer batch of the lane meanwhile, and stops
-it. At the next start the node logs that the older batch is not published
-again because the lane published the newer one after it, and removes the
-mark: the older batch is never read for publication again and never
-completes, and the lane has no alert.
+`TestPublicationInterruptedSupersededRealDaemons` runs on a snapshot lane
+(`snapshot_batches`). It interrupts the publication of a 150,000-record
+batch, then starts the producer from a build (`sdn_e2e_follow_faults`) that
+handles the mark of a `lateredo-` lane only once the test opens a gate (a
+file in the folder `SDN_E2E_PUBLICATION_GATES` names), publishes a newer
+batch of the lane meanwhile, and stops it. At the next start the node logs
+that the older batch is not published again because the lane published the
+newer one after it, and removes the mark: the older batch is never read for
+publication again and never completes, and the lane has no alert. Then a
+third batch is interrupted the same way, and at the next start a fourth
+batch (`heldlane-`, which waits at its own gate once it holds the lane)
+holds the lane when the test opens the redo's gate: the redo's first check
+passes, the node reports the third batch interrupted and starts it again,
+the fourth batch completes while the redo waits for the lane, and once the
+redo holds the lane it finds the fourth batch's series and drops the third
+batch, clearing its report, without reading it.
+
+`TestPublicationInterruptedPartsRealDaemons` runs on a lane with no
+`snapshot_batches`, whose batches are parts. Three parts are requested in
+turn (the first 150,000 records, the two others waiting for the lane behind
+it) and the node is stopped, which leaves three marks. At the next start
+every part is reported interrupted and published again, in the order the
+parts were requested, each once and whole; no part is dropped, no mark is
+left and the lane has no alert.
 
 `TestPublicationInterruptedCrashBoundRealDaemons` runs a build
 (`sdn_e2e_follow_faults`) whose publications of a `crash-` lane end the

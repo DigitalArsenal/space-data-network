@@ -42,14 +42,23 @@ keeps a mark in the publication directory's `publication-runs` folder. So
 does one refused while the node stops: during an update's wait, and during
 any other stop (an operator's restart, a reboot); such a refusal answers HTTP
 503 with `Retry-After` (before, a refusal during a stop answered 400). Once
-the next start answers ready, the node handles each mark, newest first,
-reading one row of the store (the newest series of the mark's lane) and no
-record:
+the next start answers ready, the node handles the marks one at a time,
+reading one row of the store per mark and no record. What it reads depends on
+the lane's kind (`publishing.retention.lanes[].snapshot_batches`):
 
-- if the lane has a series that started at or after the publication was
-  requested, it is not published again: of the same batch, it completed;
-  of another batch, the lane has newer data, and publishing the older batch
-  would move the lane's newest series and IPNS pointer back to it;
+- on a snapshot lane (each batch a complete snapshot, such as a GP pull) the
+  marks are handled newest first, and the row is the lane's newest series. If
+  it started at or after the publication was requested, the publication is
+  not published again: of the same batch, it completed; of another batch, the
+  lane has newer data, and publishing the older batch would move the lane's
+  newest series and IPNS pointer back to it. The same check is made again
+  once the publication holds its lane, since another batch may have been
+  publishing while it waited for the lane;
+- on any other lane the batches are parts of one dataset, each published
+  once (the cellular chunk lane): the marks are handled oldest first, in the
+  order the parts were requested, and the row is the newest series of the
+  mark's own batch. Only that batch's own completed publication removes the
+  mark; a later part does not;
 - a mark older than 24 hours is removed and not published;
 - otherwise it is published again, at most 3 attempts in all across starts
   (counted in the mark before each attempt starts); after the third the node
@@ -61,6 +70,10 @@ node's stop" before it is published again, which raises the alert; the
 report is cleared when the publication completes or when its mark is dropped
 because the lane has moved on
 (`sdn-server/internal/api/dataset_publication_resume.go`).
+
+The helper adds the daemon's `waitBeforeStopSeconds` to its graceful-stop
+grace, at most one hour; a larger value is clamped and printed as
+`daemon_stop_wait_clamped`.
 
 This path is implemented in Go (`sdn-server/internal/update/`,
 `sdn-server/internal/node/update_signal.go`). The `packages/sdn-updater-module`
