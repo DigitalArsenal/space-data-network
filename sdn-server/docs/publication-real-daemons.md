@@ -123,9 +123,28 @@ itself and does not read the completed one again.
 `TestPublicationInterruptedRedoneRealDaemons` stops the producer (SIGINT)
 while a 150,000-record batch is being published. At the next start the node
 logs the publication as failed at the step "interrupted by the node's stop",
-publishes the batch again (two publications of it in all) and the
-lane's `publication_failed` alert is clear once it completes; a further
+publishes the batch again (the batch is read for publication twice in all:
+the interrupted run and its redo; deciding to redo it reads no record) and
+the lane's `publication_failed` alert is clear once it completes; a further
 restart publishes nothing again.
+
+`TestPublicationInterruptedSupersededRealDaemons` interrupts the publication
+of a 150,000-record batch, then starts the producer from a build
+(`sdn_e2e_follow_faults`) that handles the mark of a `lateredo-` lane 60 s
+after it is ready, publishes a newer batch of the lane meanwhile, and stops
+it. At the next start the node logs that the older batch is not published
+again because the lane published the newer one after it, and removes the
+mark: the older batch is never read for publication again and never
+completes, and the lane has no alert.
+
+`TestPublicationInterruptedCrashBoundRealDaemons` runs a build
+(`sdn_e2e_follow_faults`) whose publications of a `crash-` lane end the
+process. The publication of a batch ends it; at each of the next three
+starts the mark's attempt count (1, 2, 3) is written before the attempt and
+the process ends again. At the fourth start the node reports the
+publication FAILED, given up after 3 attempts, raises the lane's
+`publication_failed` alert and removes the mark; a fifth start handles
+nothing.
 
 `TestPublicationFailureRealDaemons` runs the CelesTrak GP ingest flow of
 `space-data-network-modules` (`SDN_E2E_MODULES`, the modules checkout; the
