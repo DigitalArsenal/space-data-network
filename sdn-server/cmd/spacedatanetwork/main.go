@@ -1378,6 +1378,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// config-gated IPNS pointer to each lane's current DPM
 				// (graph: sdn-publication-hygiene-20260928).
 				publicationService.SetPublicationPolicy(cfg.Publishing.Retention, cfg.Publishing.IPNSPointers)
+				// A pointer with republish_every is re-sent a minute after
+				// boot, so the name outlives a restart that is followed by no
+				// new series (stack #980).
+				publicationService.ResumeIPNSPointers(time.Minute)
 				publicationService.SetAlerts(n.Alerts())
 				// The publication_failed alerts the last run stopped with.
 				publicationService.RestorePublicationAlerts()

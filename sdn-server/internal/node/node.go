@@ -379,11 +379,14 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 type dhtParticipation int
 
 const (
-	// dhtParticipationOff honours `peers.enable_dht: false`. The DHT object is
-	// still CONSTRUCTED — several call sites dereference n.dht with no nil
-	// guard (Start's Bootstrap at node.go, the advertisement/discovery
-	// routines), and making it nil would trade one defect for a panic — but it
-	// is never bootstrapped, so it joins nothing and answers nobody.
+	// dhtParticipationOff honours `peers.enable_dht: false`: the embedded Kubo
+	// routes nothing (routing "none") and n.dht is nil. A constructed but
+	// unbootstrapped client was not off: it learned the public DHT through any
+	// connected peer that serves it and dialed the peers it found (the owner
+	// machine's provider fleet, 2026-11-21). Every n.dht use is behind the
+	// participation check or a nil check (runDHTDiscovery returns for off,
+	// Start bootstraps only when not off, the relay walk and the gateway's
+	// peer lookup test for nil).
 	dhtParticipationOff dhtParticipation = iota
 	// dhtParticipationClient queries the DHT and publishes its own provider
 	// records without serving strangers' lookups. It also means this node
@@ -878,6 +881,12 @@ func (n *Node) init() error {
 	n.host = n.kubo.Host()
 	n.dht = n.kubo.WANDHT()
 	kuboClientURLs(&n.config.Admin, n.kubo)
+	// A publication whose files retention removed still lists as available,
+	// and read-shard and read-index serve it, while the repository holds its
+	// content in full (storage/dataset_publication_content.go).
+	if n.store != nil {
+		n.store.SetPublicationContent(n.kubo)
+	}
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
@@ -2702,6 +2711,8 @@ func (n *Node) startFlowServices() error {
 				n.sourceMetrics.RecordAttemptUnchanged(serviceID)
 			case errors.Is(runErr, flowrt.ErrNothingToStore):
 				n.sourceMetrics.RecordAttemptSucceeded(serviceID)
+			case errors.Is(runErr, flowrt.ErrLocalRunSucceeded):
+				n.sourceMetrics.RecordAttemptLocalSucceeded(serviceID)
 			default:
 				n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
 			}
@@ -2942,11 +2953,28 @@ func (n *Node) reconcileRetrievalLedger(refire bool) {
 // flowServiceRetrievalDue reports whether a flow's sources are past their
 // retrieval window, failure backoff included (sourcemetrics.RetrievalDue). A
 // flow with no ledger rows has never retrieved anything and is due by
-// definition.
+// definition. A loaded flow that fetches from no publisher (a catalog builder
+// over this node's store) is held back only by its own failure backoff
+// (sourcemetrics.LocalRunDue).
 func (n *Node) flowServiceRetrievalDue(appID string) (bool, string) {
 	baseHours, _ := n.flowServiceRetrievalBaseHours(appID) // 0: node default
+	if n.flowServiceFetchesNothing(appID) {
+		due, reason, _ := n.sourceMetrics.LocalRunDue(appID, baseHours)
+		return due, reason
+	}
 	due, reason, _ := n.sourceMetrics.RetrievalDue(appID, baseHours, true)
 	return due, reason
+}
+
+// flowServiceFetchesNothing reports whether appID is a loaded flow service
+// whose manifest declares only local capabilities (flowrt.ServiceFlow.Retrieves).
+// Anything else, a flow not loaded included, keeps the retrieval gate.
+func (n *Node) flowServiceFetchesNothing(appID string) bool {
+	if n == nil || n.plugins == nil {
+		return false
+	}
+	sf, ok := n.plugins.Get(appID).(*flowrt.ServiceFlow)
+	return ok && sf != nil && !sf.Retrieves()
 }
 
 // flowServiceRetrievalBaseHours reports the operator-configured base debounce
@@ -4083,6 +4111,20 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 // in-memory mark is declined too, not fetched and pinned by the TipQueue.
 var datasetPNMLaneRefused sync.Map
 
+// forgetDeclinedDatasetPNMs drops the marks of the PNMs whose lane was not
+// imported (refused or streamed), so the next stored-$PNM catch-up reads
+// them again: a lane that starts keeping its publications gets its current
+// one now, not after the 24-hour mark.
+func (n *Node) forgetDeclinedDatasetPNMs() {
+	datasetPNMLaneRefused.Range(func(k, _ any) bool {
+		datasetPNMLaneRefused.Delete(k)
+		if key, ok := k.(string); ok {
+			n.clearDatasetPNMMaterialized(key)
+		}
+		return true
+	})
+}
+
 // materializeDatasetPublicationPNMLane is materializeDatasetPublicationPNM
 // that also reports whether the lane scope refused the publication's lane.
 func (n *Node) materializeDatasetPublicationPNMLane(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (materialized bool, refused bool, err error) {
@@ -4191,8 +4233,11 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 				// producer refuses, or whose current batch is not held,
 				// imports here, and so does an archive-all lane, whose rule
 				// keeps each publication's DAG (its records are stored once
-				// by content address).
-				if n.laneRetentionRule(laneSchema, providerID, sourceName) == channels.RetentionArchiveAll {
+				// by content address), and a lane whose subscription keeps
+				// its publications (a gateway host: its readers fetch the
+				// producer's manifests and shards from it).
+				if n.laneRetentionRule(laneSchema, providerID, sourceName) == channels.RetentionArchiveAll ||
+					n.followKeepsPublications(from, laneSchema, providerID, sourceName) {
 					return true
 				}
 				switch n.followPublication(from, laneSchema, providerID, sourceName) {
@@ -5164,7 +5209,10 @@ func (n *Node) StopContext(ctx context.Context) error {
 	}
 
 	// Kubo owns the host, its DHT and the repository; closing it closes all
-	// three.
+	// three. The store stops reading publication content from it first.
+	if n.store != nil {
+		n.store.SetPublicationContent(nil)
+	}
 	if err := n.kubo.Stop(); err != nil {
 		return fmt.Errorf("failed to close the node's Kubo: %w", err)
 	}

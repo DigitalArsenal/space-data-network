@@ -2126,7 +2126,9 @@ func (s *FlatSQLStore) f2RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexS
 	}
 	// A current unfiltered snapshot uses the maintained type count. Older
 	// snapshots and filtered pages count the bounded window instead.
-	if through >= head.GseqHi && wq.Provider == "" && wq.Source == "" && wq.Batch == "" && q.NoradLike == "" && q.ArrivedBefore == nil {
+	if q.KnownTotal > 0 && q.ThroughSeq > 0 {
+		out.Total = q.KnownTotal
+	} else if through >= head.GseqHi && wq.Provider == "" && wq.Source == "" && wq.Batch == "" && q.NoradLike == "" && q.ArrivedBefore == nil {
 		out.Total = head.FirstLive
 	} else {
 		total, err := s.f2WindowCount(ctx, wq)

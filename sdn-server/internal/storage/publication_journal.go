@@ -92,8 +92,8 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 		x.Provider = strings.TrimSpace(x.Provider)
 		x.Source = strings.TrimSpace(x.Source)
 		x.ProductSource = strings.TrimSpace(x.ProductSource)
-		if (x.Schema != "CAT.fbs" && x.Schema != "OCM.fbs") || x.Provider == "" || x.Source == "" {
-			return errors.New("publication retention requires CAT/OCM and exact provider/source")
+		if (x.Schema != "CAT.fbs" && !isCatalogProductSchema(x.Schema)) || x.Provider == "" || x.Source == "" {
+			return errors.New("publication retention requires CAT or a catalog product standard (OCM, OMM, MOR) and exact provider/source")
 		}
 		if x.ProductSource != "" && x.Schema != "CAT.fbs" {
 			return errors.New("catalog_product_source requires CAT")
@@ -127,19 +127,19 @@ func (s *FlatSQLStore) ConfigurePublicationSources(sources []PublicationSource) 
 		}
 	}
 	for _, x := range merged {
-		if x.Schema == "OCM.fbs" {
+		if isCatalogProductSchema(x.Schema) {
 			paired := false
 			for _, c := range merged {
 				paired = paired || (c.Schema == "CAT.fbs" && c.Provider == x.Provider && c.ProductSource == x.Source)
 			}
 			if !paired {
-				return errors.New("retained OCM source requires its CAT index")
+				return fmt.Errorf("retained %s source requires its CAT index", strings.TrimSuffix(x.Schema, ".fbs"))
 			}
 		}
 		if x.ProductSource != "" {
 			found := false
 			for _, p := range merged {
-				if p.Schema == "OCM.fbs" && p.Provider == x.Provider && p.Source == x.ProductSource {
+				if isCatalogProductSchema(p.Schema) && p.Provider == x.Provider && p.Source == x.ProductSource {
 					found = true
 				}
 			}

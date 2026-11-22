@@ -630,6 +630,14 @@ func (s *Store) RecordAttemptSucceeded(appID string) {
 	s.closeAttemptSucceeded(appID, "run succeeded; the flow stores nothing, so no batch was owed")
 }
 
+// RecordAttemptLocalSucceeded closes an attempt of a flow that fetches from no
+// publisher and ran without an error, whatever it stored. A catalog builder's
+// tick with nothing new to write is normal. The streak is cleared as an ingest
+// clears it.
+func (s *Store) RecordAttemptLocalSucceeded(appID string) {
+	s.closeAttemptSucceeded(appID, "run succeeded; the flow fetches from no publisher, so nothing new to store is not a failure")
+}
+
 func (s *Store) closeAttemptSucceeded(appID, why string) {
 	if s == nil || s.db == nil {
 		return
@@ -749,6 +757,32 @@ func (s *Store) RetrievalDue(appID string, baseHours float64, backoff bool) (due
 		return true, "no source has ever been retrieved by this flow", time.Time{}
 	}
 	return false, "every source is inside its debounce window", allowedAt
+}
+
+// LocalRunDue answers the automatic-run gate for a flow that fetches from no
+// publisher, such as a catalog builder over the node's own store. No publisher
+// is owed a minimum interval, so neither the base window nor the source rows
+// hold it back: its own timer is its cadence. Only its own failures do. After a
+// run that ended in an error (a drain error, a node that refused), the next run
+// waits the same escalating window a retrieval earns,
+// EffectiveDebounceHoursFrom(baseHours, failures), counted from the last
+// attempt. An attempt still running has no recorded cause yet, so it does not
+// hold back the flow's other timer firing in the same slot.
+func (s *Store) LocalRunDue(appID string, baseHours float64) (due bool, reason string, allowedAt time.Time) {
+	if s == nil || s.db == nil {
+		return true, "retrieval ledger unavailable", time.Time{}
+	}
+	last, failures := s.AttemptState(appID)
+	cause := s.AttemptFailureReason(appID)
+	if last == nil || failures == 0 || cause == "" {
+		return true, "the flow fetches from no publisher and no failed run stands", time.Time{}
+	}
+	window := hoursDuration(EffectiveDebounceHoursFrom(baseHours, failures))
+	if age := s.now().Sub(*last); age < window {
+		return false, fmt.Sprintf("last attempt %s ago is inside the %s backoff window (%d consecutive failures; last: %s)",
+			age.Round(time.Second), window, failures, cause), last.Add(window)
+	}
+	return true, fmt.Sprintf("the %s failure backoff has passed (last: %s)", window, cause), time.Time{}
 }
 
 func hoursDuration(hours float64) time.Duration {

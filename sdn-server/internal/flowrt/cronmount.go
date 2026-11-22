@@ -525,7 +525,8 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		sf.recordTimerResult(err)
 		if finishManual != nil {
 			diagnosis := sf.retrievalDiagnosis(err)
-			if errors.Is(diagnosis, ErrRetrievalUnchanged) || errors.Is(diagnosis, ErrNothingToStore) {
+			if errors.Is(diagnosis, ErrRetrievalUnchanged) || errors.Is(diagnosis, ErrNothingToStore) ||
+				errors.Is(diagnosis, ErrLocalRunSucceeded) {
 				diagnosis = nil
 			}
 			finishManual(diagnosis)
@@ -864,6 +865,42 @@ var ErrRetrievalUnchanged = errors.New("upstream unchanged: the conditional fetc
 // and this one succeeded; the ledger counts it as a success without a batch.
 var ErrNothingToStore = errors.New("run succeeded: the flow declares no storage_ingest, so no batch was owed")
 
+// ErrLocalRunSucceeded is the diagnosis of a clean run of a flow that fetches
+// from no publisher (Retrieves is false), such as a catalog builder working
+// over the node's own store. A tick with nothing new to write is normal for
+// it, so "no batch landed" and nodes that never ran are no evidence against
+// it. Only a drain error or a node that refused is a failure. The ledger
+// counts this run as a success.
+var ErrLocalRunSucceeded = errors.New("run succeeded: the flow fetches from no publisher, so a run with nothing new to store is not a failure")
+
+// localCapabilities are the capabilities that reach nothing past the node:
+// its clock, its own store and its own keys.
+var localCapabilities = map[string]bool{
+	"clock": true, "random": true, "logging": true, "timers": true, "schedule_cron": true,
+	"storage_query": true, "storage_ingest": true, "storage_write": true,
+	"context_read": true, "context_write": true,
+	"crypto_hash": true, "crypto_sign": true, "crypto_verify": true, "crypto_encrypt": true,
+	"crypto_decrypt": true, "crypto_key_agreement": true, "crypto_kdf": true,
+}
+
+// Retrieves reports whether the flow can fetch from a publisher. It is false
+// only when every capability the manifest declares is local
+// (localCapabilities). Then the publisher fetch policy does not apply: the
+// minimum interval, "no batch landed" counted as a failure, and the backoff
+// built on it. A flow with an unknown capability, or with no manifest, is
+// treated as a retrieval, which keeps the existing behavior.
+func (sf *ServiceFlow) Retrieves() bool {
+	if sf == nil || sf.manifest == nil {
+		return true
+	}
+	for _, capability := range sf.manifest.Capabilities {
+		if !localCapabilities[capability] {
+			return true
+		}
+	}
+	return false
+}
+
 // storesRecords reports whether the flow can land a batch at all. Only a flow
 // whose manifest declares storage_ingest is granted that hostcall.
 func (sf *ServiceFlow) storesRecords() bool {
@@ -914,7 +951,8 @@ func egressReportsUnchanged(frames [][]byte) bool {
 //
 // A flow that stores nothing is judged by its own result instead: ok, error
 // (a drain error or a node that refused) or cancelled. Starved nodes and the
-// absence of a batch say nothing about it (ErrNothingToStore).
+// absence of a batch say nothing about it (ErrNothingToStore). The same holds
+// for a flow that fetches from no publisher (ErrLocalRunSucceeded).
 //
 // This error is HANDED TO THE LEDGER, NOT RETURNED FROM THE RUN. The ledger
 // records a reason only while an attempt's failure streak is still standing —
@@ -951,6 +989,11 @@ func (sf *ServiceFlow) retrievalDiagnosis(runErr error) error {
 			strings.Join(refused, "; "))
 	case !stores:
 		return ErrNothingToStore
+	case !sf.Retrieves():
+		// No publisher was asked, so nothing new to write is a normal tick,
+		// and a node the frames never reached is the flow's own design (the
+		// catalog builder's rows-refresh timer never enters its chain).
+		return ErrLocalRunSucceeded
 	case unchanged:
 		// The tail of the pipeline is starved BY DESIGN: the fetch answered 304
 		// and the parser said so on egress. Nothing to store is not a failure.

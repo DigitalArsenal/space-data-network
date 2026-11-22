@@ -31,8 +31,8 @@ import (
 )
 
 type syncSubscribeOptions struct {
-	Schema, ProviderID, SourceName, From, Start string
-	Force, JSON, FromLedger, Yes, Acknowledge   bool
+	Schema, ProviderID, SourceName, From, Start, Publications string
+	Force, JSON, FromLedger, Yes, Acknowledge                 bool
 }
 
 var (
@@ -65,7 +65,15 @@ When a producer refuses the saved cursor of a lane whose history this node
 keeps, the lane starts again at the producer's current batch and the records
 between were not read; sync subscriptions shows it as "not read" until
 --start beginning reads the whole lane again or --acknowledge-unread accepts
-the gap.`,
+the gap.
+
+A followed lane's records arrive on the stream, and its publications (the
+producer's signed manifests, shards and indexes) are not fetched while the
+stream holds the producer's current batch. --publications keep also fetches
+and imports each publication, so this node holds and serves their files: a
+gateway host whose readers fetch the producer's publications from it sets it.
+The lane's retention rule decides which publications stay. On a lane already
+followed, --publications keep|stream changes only that.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if syncSubscribeFlags.FromLedger {
 			return runSyncSubscribeFromLedger(cmd, syncSubscribeFlags)
@@ -108,6 +116,7 @@ func init() {
 	f.BoolVar(&syncSubscribeFlags.Yes, "yes", false, "with --from-ledger: subscribe (without it the plan is printed only)")
 	f.BoolVar(&syncSubscribeFlags.JSON, "json", false, "print machine-readable JSON")
 	f.BoolVar(&syncSubscribeFlags.Acknowledge, "acknowledge-unread", false, "accept the records a refused cursor left unread on this subscription (subscribes nothing)")
+	f.StringVar(&syncSubscribeFlags.Publications, "publications", "", "keep: also fetch and import each of the lane's publications, so this node serves their files; stream: do not (the default for a new subscription)")
 	addSessionTokenFlag(syncSubscribeCmd)
 
 	u := syncUnsubscribeCmd.Flags()
@@ -210,6 +219,9 @@ func subscribeOne(ctx context.Context, c *adminClient, o syncSubscribeOptions) (
 	q.Set("start", plan.Start)
 	if o.Force {
 		q.Set("force", "1")
+	}
+	if o.Publications != "" {
+		q.Set("publications", o.Publications)
 	}
 	if _, err := syncAPICall(ctx, c, http.MethodPost, api.SyncPath+"?"+q.Encode(), publicationStreamMediaType,
 		api.EncodeDSSFollow(o.Schema, o.ProviderID, o.SourceName, o.From), nil); err != nil {
@@ -457,6 +469,9 @@ func runSyncSubscriptions(cmd *cobra.Command, asJSON bool) error {
 		}
 		if s.Unread != "" {
 			fmt.Fprintf(out, "  not read: %s\n", s.Unread)
+		}
+		if s.KeepPublications {
+			fmt.Fprintf(out, "  publications: kept (each is fetched and imported; this node serves their files)\n")
 		}
 		state := "connected"
 		if !s.Connected {

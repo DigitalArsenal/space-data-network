@@ -1,0 +1,828 @@
+{
+  "programId": "com.digitalarsenal.flows.catalog-builder",
+  "name": "Catalog builder",
+  "version": "0.1.0",
+  "engineLinkage": "bridge",
+  "allowCycles": true,
+  "description": "Timer-driven reconciliation over complete storage pages; exact-W AP selection with SGP4 fallback and independently timestamped population covariance.",
+  "nodes": [
+    {
+      "nodeId": "control",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.control",
+      "methodId": "advance",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "query",
+      "pluginId": "com.digitalarsenal.hostcap.flatsql-query",
+      "methodId": "index_page",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "chain",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.chain",
+      "methodId": "run_chain",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "fallback",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.chain",
+      "methodId": "ingest_seed",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "annotation",
+      "pluginId": "com.digitalarsenal.analysis.gp-error-model",
+      "methodId": "annotate_population_flow",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "finalizer",
+      "pluginId": "com.spacedatanetwork.sdn-ap-propagator",
+      "methodId": "preseed_catalog",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "composer",
+      "pluginId": "com.digitalarsenal.analysis.catalog-composer",
+      "methodId": "replace_products",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "ingest",
+      "pluginId": "com.digitalarsenal.hostcap.storage-ingest",
+      "methodId": "ingest",
+      "kind": "transform",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "egress",
+      "pluginId": "sdn.flow.egress",
+      "methodId": "emit",
+      "kind": "sink",
+      "drainPolicy": "single-shot"
+    },
+    {
+      "nodeId": "product-prepare",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.control",
+      "methodId": "prepare_products",
+      "kind": "transform"
+    },
+    {
+      "nodeId": "product-compose",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.control",
+      "methodId": "compose_products",
+      "kind": "transform"
+    },
+    {
+      "nodeId": "rows-refresh",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.control",
+      "methodId": "refresh_rows",
+      "kind": "transform"
+    },
+    {
+      "nodeId": "rows-query",
+      "pluginId": "com.digitalarsenal.hostcap.flatsql-query",
+      "methodId": "index_page",
+      "kind": "transform"
+    },
+    {
+      "nodeId": "rows-prepare",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.control",
+      "methodId": "prepare_products",
+      "kind": "transform"
+    },
+    {
+      "nodeId": "rows-finalizer",
+      "pluginId": "com.spacedatanetwork.sdn-ap-propagator",
+      "methodId": "preseed_catalog",
+      "kind": "transform"
+    },
+    {
+      "nodeId": "rows-compose",
+      "pluginId": "com.digitalarsenal.flows.catalog-builder.control",
+      "methodId": "compose_products",
+      "kind": "transform"
+    },
+    {
+      "nodeId": "rows-ingest",
+      "pluginId": "com.digitalarsenal.hostcap.storage-ingest",
+      "methodId": "ingest",
+      "kind": "transform"
+    }
+  ],
+  "edges": [
+    {
+      "edgeId": "control-query-query-query",
+      "fromNodeId": "control",
+      "fromPortId": "query",
+      "toNodeId": "query",
+      "toPortId": "query",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "query-page-control-page",
+      "fromNodeId": "query",
+      "fromPortId": "page",
+      "toNodeId": "control",
+      "toPortId": "page",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "query-decision-control-query_status",
+      "fromNodeId": "query",
+      "fromPortId": "decision",
+      "toNodeId": "control",
+      "toPortId": "query_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-flight_config-chain-flight_config",
+      "fromNodeId": "control",
+      "fromPortId": "flight_config",
+      "toNodeId": "chain",
+      "toPortId": "flight_config",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-fit_config-chain-fit_config",
+      "fromNodeId": "control",
+      "fromPortId": "fit_config",
+      "toNodeId": "chain",
+      "toPortId": "fit_config",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-weather-chain-weather",
+      "fromNodeId": "control",
+      "fromPortId": "weather",
+      "toNodeId": "chain",
+      "toPortId": "weather",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-history-chain-history",
+      "fromNodeId": "control",
+      "fromPortId": "history",
+      "toNodeId": "chain",
+      "toPortId": "history",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-plan-chain-plan",
+      "fromNodeId": "control",
+      "fromPortId": "plan",
+      "toNodeId": "chain",
+      "toPortId": "plan",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-seed-chain-omm",
+      "fromNodeId": "control",
+      "fromPortId": "seed",
+      "toNodeId": "chain",
+      "toPortId": "omm",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-ephemeris-chain-ephemeris",
+      "fromNodeId": "control",
+      "fromPortId": "ephemeris",
+      "toNodeId": "chain",
+      "toPortId": "ephemeris",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-fallback_seed-fallback-omm",
+      "fromNodeId": "control",
+      "fromPortId": "fallback_seed",
+      "toNodeId": "fallback",
+      "toPortId": "omm",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "chain-fallback-control-fallback",
+      "fromNodeId": "chain",
+      "fromPortId": "fallback",
+      "toNodeId": "control",
+      "toPortId": "fallback",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "chain-decision-control-chain_status",
+      "fromNodeId": "chain",
+      "fromPortId": "decision",
+      "toNodeId": "control",
+      "toPortId": "chain_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "fallback-fallback-control-fallback",
+      "fromNodeId": "fallback",
+      "fromPortId": "fallback",
+      "toNodeId": "control",
+      "toPortId": "fallback",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "fallback-decision-control-chain_status",
+      "fromNodeId": "fallback",
+      "fromPortId": "decision",
+      "toNodeId": "control",
+      "toPortId": "chain_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "chain-elements-control-candidate",
+      "fromNodeId": "chain",
+      "fromPortId": "elements",
+      "toNodeId": "control",
+      "toPortId": "candidate",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-annotate_orbit-annotation-ocm",
+      "fromNodeId": "control",
+      "fromPortId": "annotate_orbit",
+      "toNodeId": "annotation",
+      "toPortId": "ocm",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-annotate_seed-annotation-elements",
+      "fromNodeId": "control",
+      "fromPortId": "annotate_seed",
+      "toNodeId": "annotation",
+      "toPortId": "elements",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "annotation-ocm-product-prepare-records",
+      "fromNodeId": "annotation",
+      "fromPortId": "ocm",
+      "toNodeId": "product-prepare",
+      "toPortId": "records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-recipe-composer-recipe",
+      "fromNodeId": "control",
+      "fromPortId": "recipe",
+      "toNodeId": "composer",
+      "toPortId": "recipe",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-catalog-composer-catalog",
+      "fromNodeId": "control",
+      "fromPortId": "catalog",
+      "toNodeId": "composer",
+      "toPortId": "catalog",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-selected-composer-ocm_products",
+      "fromNodeId": "control",
+      "fromPortId": "selected",
+      "toNodeId": "composer",
+      "toPortId": "ocm_products",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-selection-composer-decision",
+      "fromNodeId": "control",
+      "fromPortId": "selection",
+      "toNodeId": "composer",
+      "toPortId": "decision",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "composer-catalog-control-replacement",
+      "fromNodeId": "composer",
+      "fromPortId": "catalog",
+      "toNodeId": "control",
+      "toPortId": "replacement",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-meta-ingest-meta",
+      "fromNodeId": "control",
+      "fromPortId": "meta",
+      "toNodeId": "ingest",
+      "toPortId": "meta",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-product_records-ingest-ocm_records",
+      "fromNodeId": "control",
+      "fromPortId": "product_records",
+      "toNodeId": "ingest",
+      "toPortId": "ocm_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-index_records-ingest-cat_records",
+      "fromNodeId": "control",
+      "fromPortId": "index_records",
+      "toNodeId": "ingest",
+      "toPortId": "cat_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "ingest-result-control-stored",
+      "fromNodeId": "ingest",
+      "fromPortId": "result",
+      "toNodeId": "control",
+      "toPortId": "stored",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-notice-egress-notice",
+      "fromNodeId": "control",
+      "fromPortId": "notice",
+      "toNodeId": "egress",
+      "toPortId": "notice",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "composer-decision-control-compose_status",
+      "fromNodeId": "composer",
+      "fromPortId": "decision",
+      "toNodeId": "control",
+      "toPortId": "compose_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "annotation-decision-control-annotation_status",
+      "fromNodeId": "annotation",
+      "fromPortId": "decision",
+      "toNodeId": "control",
+      "toPortId": "annotation_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-state-records-ingest-nev-records",
+      "fromNodeId": "control",
+      "fromPortId": "state_records",
+      "toNodeId": "ingest",
+      "toPortId": "nev_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-compose-products-control-annotated",
+      "fromNodeId": "product-compose",
+      "fromPortId": "products",
+      "toNodeId": "control",
+      "toPortId": "annotated",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-products-control-annotated",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "products",
+      "toNodeId": "control",
+      "toPortId": "annotated",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-originals-product-compose-originals",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "originals",
+      "toNodeId": "product-compose",
+      "toPortId": "originals",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-build_records-finalizer-records",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "build_records",
+      "toNodeId": "finalizer",
+      "toPortId": "records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-request-finalizer-request",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "request",
+      "toNodeId": "finalizer",
+      "toPortId": "request",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-receiver-finalizer-receiver",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "receiver",
+      "toNodeId": "finalizer",
+      "toPortId": "receiver",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "finalizer-rows-product-compose-rows",
+      "fromNodeId": "finalizer",
+      "fromPortId": "rows",
+      "toNodeId": "product-compose",
+      "toPortId": "rows",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "finalizer-decision-product-compose-decision",
+      "fromNodeId": "finalizer",
+      "fromPortId": "decision",
+      "toNodeId": "product-compose",
+      "toPortId": "decision",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-originals-product-compose-originals-minimum",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "minimum_originals",
+      "toNodeId": "product-compose",
+      "toPortId": "minimum_originals",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-build_records-finalizer-records-minimum",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "minimum_build_records",
+      "toNodeId": "finalizer",
+      "toPortId": "minimum_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-fallbacks",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "fallbacks",
+      "toNodeId": "product-compose",
+      "toPortId": "fallbacks",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-decision-control-annotation_status",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "decision",
+      "toNodeId": "control",
+      "toPortId": "annotation_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-compose-decision-control-annotation_status",
+      "fromNodeId": "product-compose",
+      "fromPortId": "decision",
+      "toNodeId": "control",
+      "toPortId": "annotation_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-minimum_products-control-minimum_annotated",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "minimum_products",
+      "toNodeId": "control",
+      "toPortId": "minimum_annotated",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-compose-minimum_products-control-minimum_annotated",
+      "fromNodeId": "product-compose",
+      "fromPortId": "minimum_products",
+      "toNodeId": "control",
+      "toPortId": "minimum_annotated",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-prepare-asset-control-asset",
+      "fromNodeId": "product-prepare",
+      "fromPortId": "asset",
+      "toNodeId": "control",
+      "toPortId": "asset",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "product-compose-asset-control-asset",
+      "fromNodeId": "product-compose",
+      "fromPortId": "asset",
+      "toNodeId": "control",
+      "toPortId": "asset",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-minimum_selected-composer-mor_products",
+      "fromNodeId": "control",
+      "fromPortId": "minimum_selected",
+      "toNodeId": "composer",
+      "toPortId": "mor_products",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-minimum_product_records-ingest-mor_records",
+      "fromNodeId": "control",
+      "fromPortId": "minimum_product_records",
+      "toNodeId": "ingest",
+      "toPortId": "mor_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "control-asset_records-ingest-dpm_records",
+      "fromNodeId": "control",
+      "fromPortId": "asset_records",
+      "toNodeId": "ingest",
+      "toPortId": "dpm_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-refresh-query-rows-query-query",
+      "fromNodeId": "rows-refresh",
+      "fromPortId": "query",
+      "toNodeId": "rows-query",
+      "toPortId": "query",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-query-page-rows-refresh-page",
+      "fromNodeId": "rows-query",
+      "fromPortId": "page",
+      "toNodeId": "rows-refresh",
+      "toPortId": "page",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-query-decision-rows-refresh-query_status",
+      "fromNodeId": "rows-query",
+      "fromPortId": "decision",
+      "toNodeId": "rows-refresh",
+      "toPortId": "query_status",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-refresh-refresh_records-rows-prepare-refresh_records",
+      "fromNodeId": "rows-refresh",
+      "fromPortId": "refresh_records",
+      "toNodeId": "rows-prepare",
+      "toPortId": "refresh_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-refresh-refresh_request-rows-prepare-refresh_request",
+      "fromNodeId": "rows-refresh",
+      "fromPortId": "refresh_request",
+      "toNodeId": "rows-prepare",
+      "toPortId": "refresh_request",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-prepare-minimum_build_records-rows-finalizer-minimum_records",
+      "fromNodeId": "rows-prepare",
+      "fromPortId": "minimum_build_records",
+      "toNodeId": "rows-finalizer",
+      "toPortId": "minimum_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-prepare-request-rows-finalizer-request",
+      "fromNodeId": "rows-prepare",
+      "fromPortId": "request",
+      "toNodeId": "rows-finalizer",
+      "toPortId": "request",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-prepare-receiver-rows-finalizer-receiver",
+      "fromNodeId": "rows-prepare",
+      "fromPortId": "receiver",
+      "toNodeId": "rows-finalizer",
+      "toPortId": "receiver",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-prepare-refresh_originals-rows-compose-refresh_originals",
+      "fromNodeId": "rows-prepare",
+      "fromPortId": "refresh_originals",
+      "toNodeId": "rows-compose",
+      "toPortId": "refresh_originals",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-finalizer-rows-rows-compose-rows",
+      "fromNodeId": "rows-finalizer",
+      "fromPortId": "rows",
+      "toNodeId": "rows-compose",
+      "toPortId": "rows",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-finalizer-decision-rows-compose-decision",
+      "fromNodeId": "rows-finalizer",
+      "fromPortId": "decision",
+      "toNodeId": "rows-compose",
+      "toPortId": "decision",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-prepare-minimum_products-rows-refresh-minimum_products",
+      "fromNodeId": "rows-prepare",
+      "fromPortId": "minimum_products",
+      "toNodeId": "rows-refresh",
+      "toPortId": "minimum_products",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-prepare-asset-rows-refresh-asset",
+      "fromNodeId": "rows-prepare",
+      "fromPortId": "asset",
+      "toNodeId": "rows-refresh",
+      "toPortId": "asset",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-prepare-decision-rows-refresh-decision",
+      "fromNodeId": "rows-prepare",
+      "fromPortId": "decision",
+      "toNodeId": "rows-refresh",
+      "toPortId": "decision",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-compose-minimum_products-rows-refresh-minimum_products",
+      "fromNodeId": "rows-compose",
+      "fromPortId": "minimum_products",
+      "toNodeId": "rows-refresh",
+      "toPortId": "minimum_products",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-compose-asset-rows-refresh-asset",
+      "fromNodeId": "rows-compose",
+      "fromPortId": "asset",
+      "toNodeId": "rows-refresh",
+      "toPortId": "asset",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-compose-decision-rows-refresh-decision",
+      "fromNodeId": "rows-compose",
+      "fromPortId": "decision",
+      "toNodeId": "rows-refresh",
+      "toPortId": "decision",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-refresh-meta-rows-ingest-meta",
+      "fromNodeId": "rows-refresh",
+      "fromPortId": "meta",
+      "toNodeId": "rows-ingest",
+      "toPortId": "meta",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-refresh-mor_records-rows-ingest-mor_records",
+      "fromNodeId": "rows-refresh",
+      "fromPortId": "mor_records",
+      "toNodeId": "rows-ingest",
+      "toPortId": "mor_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-refresh-dpm_records-rows-ingest-dpm_records",
+      "fromNodeId": "rows-refresh",
+      "fromPortId": "dpm_records",
+      "toNodeId": "rows-ingest",
+      "toPortId": "dpm_records",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-ingest-result-rows-refresh-stored",
+      "fromNodeId": "rows-ingest",
+      "fromPortId": "result",
+      "toNodeId": "rows-refresh",
+      "toPortId": "stored",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    },
+    {
+      "edgeId": "rows-refresh-notice-egress-notice",
+      "fromNodeId": "rows-refresh",
+      "fromPortId": "notice",
+      "toNodeId": "egress",
+      "toPortId": "notice",
+      "backpressurePolicy": "queue",
+      "queueDepth": 2
+    }
+  ],
+  "triggers": [
+    {
+      "triggerId": "refresh",
+      "kind": "timer",
+      "source": "host-cron",
+      "defaultIntervalMs": 600000
+    },
+    {
+      "triggerId": "rows-refresh",
+      "kind": "timer",
+      "source": "host-cron",
+      "defaultIntervalMs": 600000
+    }
+  ],
+  "triggerBindings": [
+    {
+      "triggerId": "refresh",
+      "targetNodeId": "control",
+      "targetPortId": "tick",
+      "backpressurePolicy": "queue",
+      "queueDepth": 1
+    },
+    {
+      "triggerId": "rows-refresh",
+      "targetNodeId": "rows-refresh",
+      "targetPortId": "tick",
+      "backpressurePolicy": "queue",
+      "queueDepth": 1
+    }
+  ],
+  "requiredPlugins": [
+    "com.digitalarsenal.flows.catalog-builder.control",
+    "com.digitalarsenal.hostcap.flatsql-query",
+    "com.digitalarsenal.flows.catalog-builder.chain",
+    "com.digitalarsenal.analysis.gp-error-model",
+    "com.digitalarsenal.analysis.catalog-composer",
+    "com.digitalarsenal.hostcap.storage-ingest",
+    "com.spacedatanetwork.sdn-ap-propagator"
+  ]
+}

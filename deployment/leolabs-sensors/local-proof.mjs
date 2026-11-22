@@ -13,20 +13,27 @@ import net from "node:net";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { NETWORKS, frame, lanesOf } from "./build-records.mjs";
+import { NETWORKS, RESENT, frame, lanesOf } from "./build-records.mjs";
 
 // One lane pair per network: provider `sdn-ssa-<network>`, so a network stands alone on the node.
-// Two passes, as on the production node: round 1 (the publication of 2026-11-18), then round 2 appended to the same lanes and to new ones.
+// Three passes, as on the production node: round 1 (the publication of 2026-11-18), round 2 appended to the same lanes and to new
+// ones (2026-11-19), round 3 a lane sent again whole (RESENT: the LeoLabs radars with their outlines, 2026-11-20).
 // `total` is what the lane holds after the batch: the node signs the whole lane, so the signed count is the total, not the batch.
-export const LANES = [1, 2].flatMap((round) => NETWORKS.flatMap((network) => lanesOf(network, round).map((lane) => {
-  const whole = lanesOf(network).find((l) => l.schema === lane.schema);
+const lanesFrom = (builder, rounds) => rounds.flatMap((round) => builder.NETWORKS.flatMap((network) => builder.lanesOf(network, round).map((lane) => {
+  const whole = builder.lanesOf(network).find((l) => l.schema === lane.schema);
   const total = round === 1 ? lane.count : whole.count;
   return { ...lane, network: network.slug, round, total };
 })));
+export const LANES = lanesFrom({ NETWORKS, lanesOf }, [1, 2, 3]);
 
 const work = process.argv[2];
 const keep = process.argv.includes("--keep");
-if (!work || !process.env.SDN_NODE_BINARY) throw new Error("Usage: SDN_NODE_BINARY=<node> SDS_PIN=<pin> local-proof.mjs <work-dir under /Volumes/ramdisk> [--keep]");
+// --previous <dir>: the recipe as it was when rounds 1 and 2 went out (a copy of its files), so rounds 1 and 2 publish the records
+// the production node holds and round 3 is sent over them, as it will be there.
+const previousAt = process.argv.indexOf("--previous");
+const previous = previousAt > 0 ? await import(pathToFileURL(path.join(path.resolve(process.argv[previousAt + 1]), "build-records.mjs")).href) : null;
+const PUBLISHED = previous ? [...lanesFrom(previous, [1, 2]), ...LANES.filter((lane) => lane.round === 3)] : LANES;
+if (!work || !process.env.SDN_NODE_BINARY) throw new Error("Usage: SDN_NODE_BINARY=<node> SDS_PIN=<pin> local-proof.mjs <work-dir under /Volumes/ramdisk> [--keep] [--previous <recipe dir of rounds 1 and 2>]");
 if (!work.startsWith("/Volumes/ramdisk/")) throw new Error("the work dir must be under /Volumes/ramdisk");
 rmSync(work, { recursive: true, force: true });
 mkdirSync(path.join(work, "kubo"), { recursive: true });
@@ -73,8 +80,8 @@ const fbPath = createRequire(path.join(process.env.SDS_PIN, "package.json")).res
 const fbm = await import(pathToFileURL(fbPath).href);
 const u32 = (bytes, at) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(at, true);
 /** The lane's records as the stream check.mjs reads (u32 length + bare record), taken from the node's query answer. */
-async function readLane(lane) {
-  const request = Object.assign(new QRPT(), { KIND: qrpKind.Request, SCHEMA_NAME: lane.schema, PROVIDER_ID: lane.providerId, SOURCE_NAME: lane.sourceName, PAGE: 1, LIMIT: 100 });
+async function readLane(lane, batchId) {
+  const request = Object.assign(new QRPT(), { KIND: qrpKind.Request, SCHEMA_NAME: lane.schema, PROVIDER_ID: lane.providerId, SOURCE_NAME: lane.sourceName, PAGE: 1, LIMIT: 100, ...(batchId ? { BATCH_ID: batchId } : {}) });
   const b = new fbm.Builder(256);
   b.finishSizePrefixed(request.pack(b), "$QRP");
   const answer = await fetch(`${admin}/api/v1/data/query`, { method: "POST", headers: { "Content-Type": "application/vnd.sdn.flatbuffers.stream" }, body: b.asUint8Array() });
@@ -98,7 +105,7 @@ let failed = null;
 try {
   const readback = path.join(work, "readback");
   mkdirSync(readback, { recursive: true });
-  for (const lane of LANES) {
+  for (const lane of PUBLISHED) {
     // 1. the records, as a batch on the lane's provider/source (the publisher's own loopback lane)
     const body = frame(lane.records);
     const q = new URLSearchParams({ provider_id: lane.providerId, source_name: lane.sourceName, batch_id: `${lane.sourceName}-${lane.round}`, source_url: lane.sourceUrl });
@@ -107,12 +114,15 @@ try {
     console.log(`publish.batch round ${lane.round} ${lane.schema} ${lane.sourceName} (${lane.count} records) -> ${put.status} ${putText.slice(0, 200)}`);
     if (!put.ok) throw new Error(`publish ${lane.schema}`);
     // 2. the node signs and announces the lane as a dataset publication
-    const sign = await fetch(`${admin}/api/v1/admin/dataset-updates/publish`, { method: "POST", body: JSON.stringify({ schema: lane.schema, providerId: lane.providerId, sourceName: lane.sourceName }) });
+    // A lane sent again whole (RESENT) is signed and read as its own batch: the node keeps every batch a lane was sent, so a
+    // whole-lane signing would carry the old records beside the new ones (round 3 of 2026-11-20: 24 records, not 12).
+    const batchId = RESENT[lane.round] ? `${lane.sourceName}-${lane.round}` : undefined;
+    const sign = await fetch(`${admin}/api/v1/admin/dataset-updates/publish`, { method: "POST", body: JSON.stringify({ schema: lane.schema, providerId: lane.providerId, sourceName: lane.sourceName, ...(batchId ? { batchId } : {}) }) });
     const signed = await sign.json();
     console.log(`dataset-updates/publish ${lane.schema} -> ${sign.status} recordCount=${signed.recordCount} manifestCid=${signed.manifestCid}`);
-    if (!sign.ok || signed.recordCount !== lane.total) throw new Error(`sign ${lane.schema}: ${JSON.stringify(signed).slice(0, 300)}`);
+    if (!sign.ok || signed.recordCount !== (batchId ? lane.count : lane.total)) throw new Error(`sign ${lane.schema}: ${JSON.stringify(signed).slice(0, 300)}`);
     // 3. read back over the query API: one $QRP Request frame in; runs of [$QRP Page][RECORD_COUNT record frames] out
-    const bytes = await readLane(lane);
+    const bytes = await readLane(lane, batchId);
     console.log(`query ${lane.schema} ${lane.providerId} -> ${bytes.length} bytes`);
     mkdirSync(path.join(readback, lane.network), { recursive: true });
     writeFileSync(path.join(readback, lane.network, lane.file), bytes);

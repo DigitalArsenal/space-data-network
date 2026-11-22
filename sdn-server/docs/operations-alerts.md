@@ -43,7 +43,7 @@ left: each window's row is written together with an unfinished mark (one
 transaction), the marked windows never count as a publication of the batch,
 are not announced again by an announcement of existing publications
 (`announceExisting`), and the lane's retention releases them like any row no
-series names (the mark goes with the row). Node 1.1.9 adopted such windows
+series names (the mark goes with the row). Node 1.1.11 and earlier adopted such windows
 as a series of their batch and kept them; retention now unpins them.
 
 The store decides when the alert clears. A failed publication of a whole

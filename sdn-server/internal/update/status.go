@@ -15,9 +15,14 @@ package update
 // update topic validator, which accepts only signals: the message is neither
 // delivered to it nor forwarded by it, and without peer scoring the rejection
 // costs the sender nothing.
+//
+// On the wire the status is one size-prefixed SDS $UST record (from SDS
+// 1.292.0). Its first form, a JSON document, is gone: on 2026-11-21 the only
+// node in the field (sdn.spaceaware.io) ran 1.1.9, which never sent it.
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,11 +32,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	UST "github.com/DigitalArsenal/spacedatastandards.org/lib/go/UST"
+	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 const (
-	// StatusSchema identifies the status message.
-	StatusSchema = "org.spacedatanetwork.update.status.v1"
 	// StatusMaxBytes bounds a status message. A status with every field at
 	// its limit is under 1 KiB.
 	StatusMaxBytes = 2 << 10
@@ -104,9 +110,9 @@ type StatusAck struct {
 	Sequence int64  `json:"sequence"`
 }
 
-// Status is the message a node publishes about its own update state.
+// Status is the message a node publishes about its own update state. On the
+// wire it is one size-prefixed $UST FlatBuffer (MarshalStatus, ParseStatus).
 type Status struct {
-	Schema       string               `json:"schema"`
 	PeerID       string               `json:"peer_id"`
 	Version      string               `json:"version"`
 	Sequence     int64                `json:"sequence"`
@@ -118,42 +124,111 @@ type Status struct {
 	At           string               `json:"at"`
 }
 
-// ParseStatus decodes a status message and checks every field: the schema,
-// the peer id, version and update id character sets and lengths, RFC 3339
-// times, the state and the reason code from their fixed lists, and a pending
-// or failed block where the state names one. Fields this build does not know
-// are ignored by rule: they are never stored or shown. It does not
-// authenticate the message: the receiver checks peer_id against the
-// message's author.
-func ParseStatus(raw []byte) (*Status, error) {
+// MarshalStatus encodes a status as the size-prefixed $UST record that goes
+// on the update topic.
+func MarshalStatus(s *Status) []byte {
+	b := flatbuffers.NewBuilder(512)
+	str := func(v string) flatbuffers.UOffsetT { return b.CreateString(v) }
+	var pending, failed, ack flatbuffers.UOffsetT
+	if p := s.Pending; p != nil {
+		id, version, due := str(p.UpdateID), str(p.Version), str(p.DueAt)
+		UST.USTPendingUpdateStart(b)
+		UST.USTPendingUpdateAddUPDATE_ID(b, id)
+		UST.USTPendingUpdateAddVERSION(b, version)
+		UST.USTPendingUpdateAddSEQUENCE(b, p.Sequence)
+		UST.USTPendingUpdateAddDUE_AT(b, due)
+		pending = UST.USTPendingUpdateEnd(b)
+	}
+	if f := s.Failed; f != nil {
+		id, version, at, reason := str(f.UpdateID), str(f.Version), str(f.At), str(f.ReasonCode)
+		UST.USTFailureStart(b)
+		UST.USTFailureAddUPDATE_ID(b, id)
+		UST.USTFailureAddVERSION(b, version)
+		UST.USTFailureAddSEQUENCE(b, f.Sequence)
+		UST.USTFailureAddAT(b, at)
+		UST.USTFailureAddREASON_CODE(b, reason)
+		UST.USTFailureAddROLLED_BACK(b, f.RolledBack)
+		failed = UST.USTFailureEnd(b)
+	}
+	if a := s.Acknowledged; a != nil {
+		id := str(a.UpdateID)
+		UST.USTAcknowledgementStart(b)
+		UST.USTAcknowledgementAddUPDATE_ID(b, id)
+		UST.USTAcknowledgementAddSEQUENCE(b, a.Sequence)
+		ack = UST.USTAcknowledgementEnd(b)
+	}
+	peer, version, state, at := str(s.PeerID), str(s.Version), str(s.State), str(s.At)
+	var updateID flatbuffers.UOffsetT
+	if s.UpdateID != "" {
+		updateID = str(s.UpdateID)
+	}
+	UST.USTStart(b)
+	UST.USTAddPEER_ID(b, peer)
+	UST.USTAddVERSION(b, version)
+	UST.USTAddSEQUENCE(b, s.Sequence)
+	if updateID != 0 {
+		UST.USTAddUPDATE_ID(b, updateID)
+	}
+	UST.USTAddSTATE(b, state)
+	if pending != 0 {
+		UST.USTAddPENDING(b, pending)
+	}
+	if failed != 0 {
+		UST.USTAddFAILED(b, failed)
+	}
+	if ack != 0 {
+		UST.USTAddACKNOWLEDGED(b, ack)
+	}
+	UST.USTAddAT(b, at)
+	UST.FinishSizePrefixedUSTBuffer(b, UST.USTEnd(b))
+	return b.FinishedBytes()
+}
+
+// ParseStatus decodes a $UST status message and checks every field: the peer
+// id, version and update id character sets and lengths, RFC 3339 times, the
+// state and the reason code from their fixed lists, and a pending or failed
+// block where the state names one. Fields this build does not know are ignored
+// by rule: they are never stored or shown. It does not authenticate the
+// message: the receiver checks peer_id against the message's author.
+func ParseStatus(raw []byte) (status *Status, err error) {
 	if len(raw) == 0 || len(raw) > StatusMaxBytes {
 		return nil, errors.New("update status message is empty or too large")
 	}
-	if err := assertStrictJSONDocument(raw); err != nil {
-		return nil, fmt.Errorf("parse update status: %w", err)
+	if !IsStatusMessage(raw) {
+		return nil, errors.New("not an update status message ($UST)")
 	}
-	var status Status
-	if err := json.Unmarshal(raw, &status); err != nil {
-		return nil, fmt.Errorf("parse update status: %w", err)
+	if prefix := binary.LittleEndian.Uint32(raw[:4]); int(prefix) != len(raw)-4 {
+		return nil, errors.New("parse update status: the size prefix does not match the message")
 	}
-	if status.Schema != StatusSchema {
-		return nil, fmt.Errorf("not an update status message: %q", status.Schema)
+	// A malformed buffer makes the generated accessors index out of range;
+	// that is a refused message, never a crash of the receiving node.
+	defer func() {
+		if recover() != nil {
+			status, err = nil, errors.New("parse update status: malformed $UST record")
+		}
+	}()
+	record := UST.GetSizePrefixedRootAsUST(raw, 0)
+	status = &Status{PeerID: string(record.PEER_ID()), Version: string(record.VERSION()), Sequence: record.SEQUENCE(),
+		UpdateID: string(record.UPDATE_ID()), State: string(record.STATE()), At: string(record.AT())}
+	if p := record.PENDING(nil); p != nil {
+		status.Pending = &StatusPendingUpdate{UpdateID: string(p.UPDATE_ID()), Version: string(p.VERSION()), Sequence: p.SEQUENCE(), DueAt: string(p.DUE_AT())}
+	}
+	if f := record.FAILED(nil); f != nil {
+		status.Failed = &StatusFailure{UpdateID: string(f.UPDATE_ID()), Version: string(f.VERSION()), Sequence: f.SEQUENCE(),
+			At: string(f.AT()), ReasonCode: string(f.REASON_CODE()), RolledBack: f.ROLLED_BACK()}
+	}
+	if a := record.ACKNOWLEDGED(nil); a != nil {
+		status.Acknowledged = &StatusAck{UpdateID: string(a.UPDATE_ID()), Sequence: a.SEQUENCE()}
 	}
 	if err := status.validate(); err != nil {
 		return nil, fmt.Errorf("update status: %w", err)
 	}
-	return &status, nil
+	return status, nil
 }
 
-// IsStatusMessage reports whether raw names the status schema, valid or not.
+// IsStatusMessage reports whether raw is a $UST record, valid or not.
 func IsStatusMessage(raw []byte) bool {
-	if len(raw) == 0 || len(raw) > 64<<10 {
-		return false
-	}
-	var probe struct {
-		Schema string `json:"schema"`
-	}
-	return json.Unmarshal(raw, &probe) == nil && probe.Schema == StatusSchema
+	return len(raw) >= 12 && len(raw) <= 64<<10 && UST.SizePrefixedUSTBufferHasIdentifier(raw)
 }
 
 func (s *Status) validate() error {
@@ -304,7 +379,7 @@ func (s *Status) AtTime() time.Time {
 // pending.json and the deploy ledger. A failure the node has moved past (it
 // runs a sequence at or above the failed one) is not reported.
 func LocalStatus(paths Paths, peerID, version string, ack *StatusAck, now time.Time) *Status {
-	status := &Status{Schema: StatusSchema, PeerID: peerID, Version: version, State: StatusCurrent,
+	status := &Status{PeerID: peerID, Version: version, State: StatusCurrent,
 		Acknowledged: ack, At: now.UTC().Format(time.RFC3339)}
 	if state, err := LoadState(paths); err == nil {
 		status.Sequence, status.UpdateID = state.Sequence, state.UpdateID

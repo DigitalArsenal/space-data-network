@@ -164,7 +164,11 @@ type FlatSQLStore struct {
 	// write holds it shared, and a removal that checks a record's tags and
 	// then deletes it holds it alone, so no record gains a tag between the
 	// check and the delete (follow_lane.go).
-	tagMu                          sync.RWMutex
+	tagMu sync.RWMutex
+	// publicationContent answers for a publication file that is not on
+	// disk whether the node's IPFS repository holds its content
+	// (dataset_publication_content.go). Unset: only the files count.
+	publicationContent             atomic.Pointer[publicationContentHolder]
 	publicationSourceKeys          atomic.Pointer[map[publicationSourceKey]bool]
 	publicationEnabled             atomic.Bool
 	publicationGroupMu             sync.Mutex
@@ -5157,6 +5161,11 @@ type RecordIndexRow struct {
 type RecordIndexSeqQuery struct {
 	RecordIndexPageQuery
 	AfterSeq, ThroughSeq int64
+	// KnownTotal is the snapshot's match count from an earlier page of the
+	// same snapshot (ThroughSeq set). When it is above 0 the page does not
+	// count the snapshot again (stack #1019: on a large source that count
+	// examines every row, on every page).
+	KnownTotal int64
 }
 
 // RecordIndexSeqPage is a RecordIndexSeqQuery's answer: the rows, the
@@ -5197,7 +5206,9 @@ func (s *FlatSQLStore) RecordIndexSeqPage(q RecordIndexSeqQuery) (RecordIndexSeq
 	}
 	out := RecordIndexSeqPage{Through: through, Rows: []RecordIndexRow{}}
 	countArgs := append(append([]interface{}{}, args...), through)
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_index ix WHERE `+whereSQL+` AND ix.rowid <= ?`, countArgs...).Scan(&out.Total); err != nil {
+	if q.KnownTotal > 0 && q.ThroughSeq > 0 {
+		out.Total = q.KnownTotal
+	} else if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_index ix WHERE `+whereSQL+` AND ix.rowid <= ?`, countArgs...).Scan(&out.Total); err != nil {
 		return RecordIndexSeqPage{}, fmt.Errorf("count record index page: %w", err)
 	}
 	pageArgs := append(append([]interface{}{}, args...), q.AfterSeq, through, q.Limit, q.Offset)

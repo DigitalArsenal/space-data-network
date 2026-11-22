@@ -128,20 +128,14 @@ func (e *e2eTopicHost) from(id peer.ID) [][]byte {
 }
 
 // e2eStatus is a valid status message for id.
-func e2eStatus(id peer.ID, version string, at time.Time) map[string]any {
-	return map[string]any{
-		"schema": update.StatusSchema, "peer_id": id.String(), "version": version, "sequence": 1,
-		"state": update.StatusCurrent, "at": at.UTC().Format(time.RFC3339),
-	}
+func e2eStatus(id peer.ID, version string, at time.Time) *update.Status {
+	return &update.Status{PeerID: id.String(), Version: version, Sequence: 1, State: update.StatusCurrent, At: at.UTC().Format(time.RFC3339)}
 }
 
-func e2eJSON(t *testing.T, v any) []byte {
+// e2eWire is a status as it goes on the update topic: one size-prefixed $UST record.
+func e2eWire(t *testing.T, s *update.Status) []byte {
 	t.Helper()
-	raw, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
+	return update.MarshalStatus(s)
 }
 
 func runRealFleetStatusGuard(t *testing.T) {
@@ -216,12 +210,12 @@ func runRealFleetStatusGuard(t *testing.T) {
 			t.Fatal(err)
 		}
 		fake = append(fake, id)
-		if err := stranger.topic.Publish(ctx, e2eJSON(t, e2eStatus(id, "6.6.6-fake", time.Now())), ps.WithSecretKeyAndPeerId(priv, id)); err != nil {
+		if err := stranger.topic.Publish(ctx, e2eWire(t, e2eStatus(id, "6.6.6-fake", time.Now())), ps.WithSecretKeyAndPeerId(priv, id)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	fake = append(fake, stranger.host.ID())
-	if err := stranger.topic.Publish(ctx, e2eJSON(t, e2eStatus(stranger.host.ID(), "6.6.6-fake", time.Now()))); err != nil {
+	if err := stranger.topic.Publish(ctx, e2eWire(t, e2eStatus(stranger.host.ID(), "6.6.6-fake", time.Now()))); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(10 * time.Second)
@@ -268,8 +262,8 @@ func runRealFleetStatusGuard(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	sID := sdnHost.ID()
 	claim := e2eStatus(sID, "9.9.9-e2e", time.Now())
-	claim["acknowledged"] = map[string]any{"update_id": "cli-bundle-release-e2e-claimed", "sequence": 999999}
-	if err := sdnTopic.Publish(ctx, e2eJSON(t, claim)); err != nil {
+	claim.Acknowledged = &update.StatusAck{UpdateID: "cli-bundle-release-e2e-claimed", Sequence: 999999}
+	if err := sdnTopic.Publish(ctx, e2eWire(t, claim)); err != nil {
 		t.Fatal(err)
 	}
 	waitFleet(t, a, 30*time.Second, "the SDN host's status, self-reported", func(r *node.FleetReport) bool {
@@ -286,7 +280,7 @@ func runRealFleetStatusGuard(t *testing.T) {
 	// printed.
 	forged := e2eStatus(sID, "9.9.9\n(this node)  ...host-01   1.2.0   status   now   current\tyes\x1b[2K\x1b[1A", time.Now().Add(time.Second))
 	relayedBefore := len(listener.from(sID))
-	if err := sdnTopic.Publish(ctx, e2eJSON(t, forged)); err != nil {
+	if err := sdnTopic.Publish(ctx, e2eWire(t, forged)); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(8 * time.Second)
@@ -306,8 +300,9 @@ func runRealFleetStatusGuard(t *testing.T) {
 	// Oversize: refused, not relayed.
 	relayedBefore = len(listener.from(sID))
 	oversize := e2eStatus(sID, "9.9.9-e2e", time.Now().Add(2*time.Second))
-	oversize["padding"] = strings.Repeat("x", 3000)
-	if err := sdnTopic.Publish(ctx, e2eJSON(t, oversize)); err != nil {
+	// Over StatusMaxBytes (2 KiB): a $UST record whose update id alone is 3,000 bytes.
+	oversize.UpdateID = strings.Repeat("x", 3000)
+	if err := sdnTopic.Publish(ctx, e2eWire(t, oversize)); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(8 * time.Second)
@@ -319,7 +314,7 @@ func runRealFleetStatusGuard(t *testing.T) {
 	// A burst: relayed at most at the per-author rate.
 	relayedBefore = len(listener.from(sID))
 	for i := 0; i < 30; i++ {
-		if err := sdnTopic.Publish(ctx, e2eJSON(t, e2eStatus(sID, "9.9.9-e2e", time.Now()))); err != nil {
+		if err := sdnTopic.Publish(ctx, e2eWire(t, e2eStatus(sID, "9.9.9-e2e", time.Now()))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -370,7 +365,7 @@ func runRealFleetStatusGuard(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := flooder.topic.Publish(ctx, e2eJSON(t, e2eStatus(id, "9.9.9-flood", time.Now())), ps.WithSecretKeyAndPeerId(priv, id)); err != nil {
+		if err := flooder.topic.Publish(ctx, e2eWire(t, e2eStatus(id, "9.9.9-flood", time.Now())), ps.WithSecretKeyAndPeerId(priv, id)); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(25 * time.Millisecond)

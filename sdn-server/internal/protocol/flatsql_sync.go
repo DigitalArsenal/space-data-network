@@ -727,11 +727,35 @@ func (h *FlatSQLSyncHandler) handleListPublished(w io.Writer, req syncRequest) e
 	}
 }
 
-// publishedAsset is one publication's shard or index file.
+// publishedAsset is one publication's shard or index file, or, when the file
+// is gone and the node's IPFS repository holds the content in full, that
+// content (cid set, path empty).
 type publishedAsset struct {
 	segment syncwire.Segment
 	path    string
+	cid     string
 	size    int64
+	store   *storage.FlatSQLStore
+}
+
+// open reads the asset from its file or from the repository.
+func (a publishedAsset) open() (io.ReadSeekCloser, error) {
+	if a.path != "" {
+		return os.Open(a.path)
+	}
+	file, _, err := a.store.OpenPublicationContent(a.cid)
+	return file, err
+}
+
+// heldAsset is the asset of cid served from the repository when its file at
+// path is missing; ok is false when the repository does not hold it in full
+// (or, with want > 0, at another size).
+func heldAsset(store *storage.FlatSQLStore, cid string, want int64) (int64, bool) {
+	size, held := store.PublicationContentHeld(cid)
+	if !held || (want > 0 && size != want) {
+		return 0, false
+	}
+	return size, true
 }
 
 // publishedShard resolves a shard CID of the request's lane.
@@ -751,6 +775,13 @@ func publishedShard(store *storage.FlatSQLStore, req syncRequest, cid string) (p
 		return publishedAsset{}, err
 	}
 	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		if size, held := heldAsset(store, cid, pub.ByteCount); held {
+			seg := syncwire.SegmentFromPublication(pub)
+			seg.Role, seg.ByteCount = syncwire.RoleShard, size
+			return publishedAsset{segment: seg, cid: cid, size: size, store: store}, nil
+		}
+	}
 	if err != nil {
 		return publishedAsset{}, fmt.Errorf("stat published shard %s: %w", cid, err)
 	}
@@ -759,7 +790,7 @@ func publishedShard(store *storage.FlatSQLStore, req syncRequest, cid string) (p
 	}
 	seg := syncwire.SegmentFromPublication(pub)
 	seg.Role, seg.ByteCount = syncwire.RoleShard, info.Size()
-	return publishedAsset{segment: seg, path: path, size: info.Size()}, nil
+	return publishedAsset{segment: seg, path: path, size: info.Size(), store: store}, nil
 }
 
 // publishedIndex resolves an index CID of the request's lane.
@@ -780,12 +811,19 @@ func publishedIndex(store *storage.FlatSQLStore, req syncRequest, cid string) (p
 			return publishedAsset{}, err
 		}
 		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			if size, held := heldAsset(store, cid, 0); held {
+				seg := syncwire.SegmentFromPublication(pub)
+				seg.Role, seg.ByteCount = syncwire.RoleIndex, size
+				return publishedAsset{segment: seg, cid: cid, size: size, store: store}, nil
+			}
+		}
 		if err != nil {
 			return publishedAsset{}, fmt.Errorf("stat published index %s: %w", cid, err)
 		}
 		seg := syncwire.SegmentFromPublication(pub)
 		seg.Role, seg.ByteCount = syncwire.RoleIndex, info.Size()
-		return publishedAsset{segment: seg, path: path, size: info.Size()}, nil
+		return publishedAsset{segment: seg, path: path, size: info.Size(), store: store}, nil
 	}
 	return publishedAsset{}, fmt.Errorf("published index was not found for %s", cid)
 }
@@ -825,7 +863,7 @@ func (h *FlatSQLSyncHandler) handleReadPublishedBytes(w io.Writer, req syncReque
 	}
 	asset.segment.ByteOffset, asset.segment.ByteLength = byteOffset, byteLength
 
-	file, err := os.Open(asset.path)
+	file, err := asset.open()
 	if err != nil {
 		return fmt.Errorf("open %s %s: %w", asset.segment.Role, req.cid, err)
 	}
@@ -885,7 +923,7 @@ func (h *FlatSQLSyncHandler) handleReadShardBatch(w io.Writer, req syncRequest) 
 	}
 	buffer := make([]byte, publishedShardCopyBufferBytes)
 	for _, asset := range assets {
-		file, err := os.Open(asset.path)
+		file, err := asset.open()
 		if err != nil {
 			return fmt.Errorf("open published shard %s: %w", asset.segment.ShardCID, err)
 		}

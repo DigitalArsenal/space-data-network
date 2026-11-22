@@ -140,6 +140,43 @@ jobs:
             exit 1
           }
           Write-Host 'docs/install.ps1 parses clean'
+      # The installer's archive step, alone (its function taken from the
+      # parsed script), on both shells the documented command can run in:
+      # Expand-Archive failed inside Windows PowerShell 5.1 on this runner
+      # (stack #1027). A zip with nested folders is extracted twice into the
+      # same folder, as a re-run of the installer does.
+      - name: Installer archive step (Windows PowerShell 5.1 and PowerShell 7)
+        shell: pwsh
+        run: |
+          $test = @'
+          $ErrorActionPreference = 'Stop'
+          function Write-Info { param([string]$Message) Write-Host $Message }
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/install.ps1'), [ref]$null, [ref]$errors)
+          $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Expand-SdnArchive' }, $true)
+          if (-not $fn) { throw 'Expand-SdnArchive not found in scripts/install.ps1' }
+          Invoke-Expression $fn.Extent.Text
+          $root = Join-Path ([System.IO.Path]::GetTempPath()) ("sdn-extract-" + [guid]::NewGuid())
+          $src = Join-Path $root 'src'
+          New-Item -ItemType Directory -Path (Join-Path $src 'bundle\bin') -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $src 'bundle\bin\a.txt') -Value 'alpha'
+          Set-Content -LiteralPath (Join-Path $src 'bundle\b.txt') -Value 'beta'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Join-Path $root 'bundle.zip'
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($src, $zip)
+          $dest = Join-Path $root 'out'
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          Expand-SdnArchive -LiteralPath $zip -DestinationPath $dest
+          Expand-SdnArchive -LiteralPath $zip -DestinationPath $dest
+          if ((Get-Content -LiteralPath (Join-Path $dest 'bundle\bin\a.txt')) -ne 'alpha') { throw 'a.txt was not extracted' }
+          if ((Get-Content -LiteralPath (Join-Path $dest 'bundle\b.txt')) -ne 'beta') { throw 'b.txt was not extracted' }
+          Write-Host "extracted twice on PowerShell $($PSVersionTable.PSVersion)"
+          '@
+          Set-Content -LiteralPath extract-test.ps1 -Value $test
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File extract-test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoLogo -NoProfile -File extract-test.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   # Cheap and first: secret/infra scan, gofmt, and the encryption module's Go
   # suite — everything that needs neither WasmEdge nor the engine.
