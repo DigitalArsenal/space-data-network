@@ -270,14 +270,16 @@ func TestPublicationAlertVerifyCheckErrorRealDaemons(t *testing.T) {
 		t.Fatalf("the failed check of \"x\" was taken for a confirmation (%s)", d.logPath)
 	}
 
+	// The check at start can end before the alert is read, so the raise is
+	// read from the log.
 	d.stop(t)
 	d.start(t)
-	alert = publicationAlert(t, d, lane)
-	t.Logf("alert at the restarted node's start: %s", alert)
-	if !strings.Contains(alert, `the check of the batch against what it exported failed`) {
-		t.Fatalf("the restarted node did not raise the alert of \"x\" again from its row: %q", alert)
+	restored := publicationAwaitLog(t, d, `Dataset publication `+lane+`: 1 failed scope(s) of the last run are unpublished; the publication_failed alert is raised again: `, time.Minute)
+	t.Logf("raised at the restarted node's start: %s", restored)
+	if !strings.Contains(restored, `the check of the batch against what it exported failed`) {
+		t.Fatalf("the restarted node did not raise the alert of \"x\" again from its row: %s", restored)
 	}
-	t.Logf("checks at start: %s", publicationAwaitLog(t, d, `Dataset publications: the node is ready; checking `, time.Minute))
+	t.Logf("checks at start: %s", publicationAwaitLog(t, d, `Dataset publications: the node is ready; checking 1 failed batch(es)`, time.Minute))
 	awaitPublicationAlertCleared(t, d, lane, time.Minute)
 	t.Logf("cleared: %s", publicationLogAfter(t, d, `a completed publication of the whole of failed batch "x" exported the 2 records it holds`))
 
