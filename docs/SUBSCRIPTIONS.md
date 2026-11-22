@@ -1,6 +1,6 @@
 # Subscriptions: how a node imports lanes
 
-From 1.2.0 a node imports only the lanes it subscribes to. A lane is one
+From 1.1.10 a node imports only the lanes it subscribes to. A lane is one
 standard, provider and source (`OMM` `celestrak.eth` / `celestrak-gp`); a
 subscription names a lane and the producer peer to take it from. The node
 follows the lane over a live stream (`read-chunk` with `FOLLOW` on
@@ -8,7 +8,7 @@ flatsql-sync): records arrive within seconds of the producer storing them.
 The producer must be in `peers.trusted_peers`, and the node must be able to
 dial it (`network.bootstrap`).
 
-Removed in 1.2.0: `peers.trusted_import` (the allow and deny lists and
+Removed in 1.1.10: `peers.trusted_import` (the allow and deny lists and
 `new_lanes`), the lane ledger `trusted-import-lanes.json`, the feed-head
 announcements, the five-minute catch-up of published shards and
 `security.require_signed_feed_heads`. A signed `$PNM` publication from a peer
@@ -18,7 +18,9 @@ stream is connected receives the publication's records on the stream, and
 its shard is not fetched again (except under `archive-all`, which keeps each
 publication's DAG). A lane whose stream the producer refuses (a
 standard off its public read surface, such as `CNP` or `IQC`, to a peer it
-grants no private reads) imports through its publications.
+grants no private reads) imports through its publications. A lane subscribed
+with `--publications only` opens no stream and imports through its
+publications alone (below).
 
 A record gossiped on a schema topic (`POST /api/v1/pubsub/publish`, the
 sdn-js `publish`, a module's `pubsub.publish`) names no lane, so no
@@ -41,6 +43,11 @@ spacedatanetwork sync subscribe --schema OMM --provider-id space-data-network-02
 # changes only that
 spacedatanetwork sync subscribe --schema OMM --provider-id space-data-network-02 \
   --source-name celestrak-gp --from <producer peer id> --publications keep
+
+# import the lane from its publications alone, with no stream (a large
+# keep-all lane); on a subscribed lane it changes only that
+spacedatanetwork sync subscribe --schema OMM --provider-id space-data-network-02 \
+  --source-name celestrak-gp --from <producer peer id> --publications only
 
 # the lanes this node follows
 spacedatanetwork sync subscriptions
@@ -81,7 +88,16 @@ rule):
   tagged to the batch, not sent again.
 - `keep-all` and `archive-all`: at the lane's beginning.
 
-`--start current` or `--start beginning` overrides the rule's start.
+`--start current` or `--start beginning` overrides the rule's start. A
+`--publications only` subscription has no start and no first read: `--start`
+is refused with it.
+
+The lane's records and bytes the producer states are its batch memberships,
+the sums of the counters of the lane's batches: a record two of the lane's
+batches hold counts in each, so on a keep-all lane whose batches carry most
+records over they can be several times its distinct records (3.6 times on a
+copy of the production catalog's `OMM` lane). `sync subscribe` prints them as
+"records counted per batch". The current batch's figures are exact.
 
 Before it subscribes the node compares the first read with what it can take,
 and refuses it, naming both, when:
@@ -91,7 +107,7 @@ and refuses it, naming both, when:
 - the records it holds plus the first read pass `subscriptions.record_ceiling`
   (default 32,000,000: the store engine's ceiling in its 2 GiB heap).
 
-`--force` subscribes anyway. A producer before 1.2.0 (or one that serves the
+`--force` subscribes anyway. A producer before 1.1.10 (or one that serves the
 lane's stream only to peers it grants private reads) states no lane: the
 subscription is refused; `--force` subscribes at the producer's current
 batch, which it starts at once the producer states the lane, and `--force
@@ -107,7 +123,15 @@ the most bytes one page can hold, 8 MiB): a page that would leave less than
 take the records the node holds past `subscriptions.record_ceiling`, is not
 stored. A lane's `$PNM` publications are imported under the same check,
 for the records the signed manifest states and the shard's bytes, before
-the shard is fetched. What the other lanes are storing at the same time
+the shard is fetched; a stated size no disk can hold (past 2^62 bytes of
+store) stops the lane like any other. The stated sizes also bound the
+import: the shard and the index are fetched up to the bytes the manifest
+states and no further, an index listing more records than it states stores
+none, and a manifest stating no records or a shard or index of 0 bytes is
+refused before the fetch. Such a publication raises the alert
+`publication_misstated` on the lane, naming the publication, the producer
+and both figures, and is recorded as a permanent error (not fetched again).
+What the other lanes are storing at the same time
 counts against both: the lanes and the publication imports share one
 reservation, released when each store returns, also when it fails. The
 lane stops, its cursor kept; `sync subscriptions` shows why (`stopped`) and
@@ -131,7 +155,8 @@ start, until `sync subscribe --start beginning` (same lane and producer)
 reads the whole lane again or `sync subscribe --acknowledge-unread` accepts
 the gap. A lane subscribed from its beginning stays in `follows.dss`
 meanwhile. `sync unsubscribe` clears the lane's alerts (`follow_cursor_refused`,
-`follow_stopped`, `follow_refused`, `subscription_refused`).
+`follow_stopped`, `follow_refused`, `subscription_refused`,
+`publication_misstated`).
 
 A lane whose stream is connected does not import its `$PNM` publications
 (their records arrive on the stream) once the batch the producer states is
@@ -142,7 +167,17 @@ starts (a restart, a new subscription), until its stream has held the
 stated batch or failed to, and for at most 5 minutes, a publication waits:
 the stored-`$PNM` catch-up takes it up again as soon as the stream settles,
 so a batch the stream holds again after a restart is not imported a second
-time.
+time. The 5 minutes count from the lane's start: a catch-up runs when they
+end, whatever else ran it in between, so a lane whose stream never connects
+imports its waiting publication 5 minutes after it starts.
+
+A failed hold of the stated batch (its list read, its records fetched) does
+not end the stream. The batch is asked for again under the stream's backoff:
+at least 30 s after the last ask, and after consecutive failures 1 s doubling
+up to 20 minutes, each wait drawn within 20% of it; a hold that succeeds
+starts it again. `last error` in `sync subscriptions` names the next ask. A
+producer's `busy` refusal is waited at least its retry hint, at most
+20 minutes.
 
 So a followed lane's node holds its records but not its publications' files
 (the producer's signed manifests, shards and indexes). A node whose readers
@@ -157,6 +192,46 @@ lane, the stored-`$PNM` catch-up runs at once and reads the publications it
 had passed over. `sync subscriptions` shows such a lane with "publications:
 kept" (`keep_publications` in `--json`).
 
+### A lane imported from its publications alone
+
+`sync subscribe --publications only` (API `POST /api/v1/sync?publications=only`)
+subscribes to a lane that opens no stream: the node asks the producer nothing
+for it (no statement, no batch list, no page, no record by content address)
+and imports each publication of the lane through the `$PNM` path as it comes,
+at once, with the lane's retention rule applied as under `--publications
+keep`. At start the stored-`$PNM` catch-up imports the newest publication of
+the lane that the node received and had not imported. A publication the node
+did not receive (made while it was stopped or out of reach) is not fetched
+afterwards: the lane is current again at the producer's next publication, and
+under a keep-all rule the records only that missed batch carried are not
+imported. A `sync subscribe` for the lane without `--publications` is
+refused, so the producer is not asked for its statement by mistake. Each publication is imported under the running guard
+above (the shared reservation, the free disk reserve, the record ceiling,
+the import's size caps); there is no first read to check before the
+subscription, and `--start` is refused with it. `sync subscriptions` shows
+such a lane as "publications only, no stream" (`publications_only` in
+`--json`); its `$DSS` reads `SYNC_PROTOCOL` `dataset publications ($PNM)`.
+
+Use it for a large keep-all lane of a producer that publishes it, such as
+the production catalog lanes (`OMM` and `MPE` `space-data-network-02` /
+`celestrak-gp`: 10 to 12 million records in hundreds of batches). Following
+such a lane as a stream is not cheap for its producer: each time a follower
+holds a new batch, every page of the batch's list (8,192 records) walks the
+whole lane (10 to 16 s a page on a copy of the production store). It runs
+in one of the 2 slots the producer gives other peers' reads, on an
+interactive engine lane, so the producer's own publication keeps its lanes,
+but it runs to its end even when the follower has left (see "What a
+follower costs its producer" below). A publication costs the producer nothing per follower:
+its manifest, shard and index are fetched over IPFS. The lane's records then
+arrive with each publication (every 3 hours on the catalog), not within
+seconds of the producer storing them.
+
+On a subscribed lane `--publications only` changes only that: the stream
+stops, and the cursor is kept in the file. `--publications keep` or
+`stream` on a publications-only lane starts the stream at the producer's
+current batch, as a new subscription started there does (the publications
+carried the lane meanwhile); the subscription and its counts stay.
+
 A node that has imported a lane's publications also lists them (`list-published`) and serves their files (`read-shard`, `read-index`). Each row is listed `available` while its shard and index are on the node's disk. Lane retention removes the files of the batches it no longer keeps as current. When a file is gone but the node's IPFS repository still holds that content in full, with every block of its DAG local and a shard of the published size, the row is still listed `available`, and both reads serve the bytes from the repository. A Bitswap reader that falls back to the publication before the newest then finds it, for as long as the node holds it, whether that is because of a pin or because the repository collects no garbage. A row that is neither on disk nor fully in the repository is listed `unavailable` (`shard_missing` or `index_missing`). After 24 hours it is retired from the listing.
 
 A node with its DHT off (`peers.enable_dht: false`) has no content routing,
@@ -165,9 +240,10 @@ before, its LAN peers and its peered peers (broadcast control, on since Kubo
 0.37). A producer it is merely connected to is never asked, so its fetches by
 content address (a kept publication's shard) and its gateway's would time
 out. Such a node therefore adds each producer it follows a lane from to
-Kubo's peering service when the followed stream opens, which keeps the
-connection and makes Bitswap ask it, and removes it when no lane is followed
-from that producer. A producer in the Kubo repository's `Peering.Peers` is
+Kubo's peering service when the followed stream opens (for a
+publications-only lane, once it knows the producer's addresses), which keeps
+the connection and makes Bitswap ask it, and removes it when no lane is
+subscribed from that producer. A producer in the Kubo repository's `Peering.Peers` is
 left as it is. `swarm/peering/ls` on the node's Kubo API lists them.
 
 A producer serves a peer it does not list as trusted at most 8 followed
@@ -182,25 +258,26 @@ refused, so a producer whose stored records name an earlier identity of it
 serves its stream but not its current batch.
 
 What a follower costs its producer: a lane's statement is answered from the
-producer's counters (the standard's newest sequence and the counters of the
-lane's batches), never by reading the lane's records, so it costs the lane's
-batches and not its records. The batch's and the lane's records and bytes it
-states are the sums of those counters: a record that two of the lane's
-batches hold counts in each, and the lane's figure is then more than its
-records (a read from the lane's beginning sends each record once). A
-followed stream from the lane's beginning reads forward from the start
-without counting the lane first. Every read a follower asks for (a
-statement, a followed page, a batch's list, records by content address)
-runs under its stream: when the follower resets the stream or the
-connection ends, the producer's store read stops. Each read has a bound (a
-statement, a batch's list and a fetch by content address 1 minute, a
-followed page and any other `read-chunk` scan 2 minutes), past which the
-producer answers `busy`. At most 2 reads of other peers run at once (the
-store engine serves reads on 4 interactive lanes and 1 bulk lane, so the
-node's own reads, such as its publications' window probes and fingerprint
-scans, always have lanes of their own; ingest is written apart from every
-read). A statement past that is refused `busy` at once; a page, a list or a
-scan waits for its turn within its bound.
+producer's counters, never by reading the lane's records, so it costs the
+lane's batches and not its records (the lane's figures it states are batch
+memberships, as above). A followed stream from the lane's beginning reads
+forward from the start without counting the lane first. At most 2 reads of
+other peers run at once: a statement, a followed page, a batch's list, a
+fetch by content address, a `read-chunk` scan. The store engine serves reads
+on 4 interactive lanes and 1 bulk lane, and none of these reads uses the
+bulk lane, so the node's own reads (its publications' window probes and
+fingerprint scans, its API) always have 2 interactive lanes and the bulk
+lane; ingest is written apart from every read. A statement past the limit
+is refused `busy` at once; the others wait for their turn, a batch's list
+and a fetch by content address at most 1 minute, a page or a scan at most
+2 minutes, then `busy`.
+
+A statement and a followed page (or `read-chunk` scan) run under their
+stream: when the follower resets the stream or the connection ends, the
+producer's store read stops. Each has a bound (a statement 1 minute, a page
+or a scan 2 minutes), past which the producer answers `busy`. A batch's list
+and a fetch by content address run to their end in their slot whether or
+not the follower is still there.
 
 A follower waits up to 5 minutes for a statement and for each page. After a
 stream that delivered no page it waits before opening the stream again: 1
@@ -215,16 +292,19 @@ lane's `$PNM` publications import, as above.
 with the producer (`PROVIDER_PEER_ID`), the cursor to resume at (`CURSOR`),
 where it starts (`SYNC_FILTER` `start=current` or `start=beginning`, with
 `unread=<time>` while a refused cursor's gap is not acknowledged,
-`subscribed=beginning` for a lane so started, and `publications=keep` for a
+`subscribed=beginning` for a lane so started, `publications=keep` for a
 lane that keeps its publications, which a build before 1.1.11 does not know
-and so holds without running), when it
+and so holds without running, and `stream=none` for a lane imported from its
+publications alone, which a build before 1.1.13 does not know and so holds
+without running), when it
 was subscribed (`LAST_SYNC_STARTED_AT`) and what has been received. The cursor
 is saved only after the store has taken a page, so a restart resumes with
 nothing lost; a record sent again is the same content address and is stored
 once.
 
 `follows.dss`, beside it, holds, in the same form, only the subscriptions
-that start at the lane's beginning. It is the file 1.1.9 reads: 1.1.9 follows
+that start at the lane's beginning, and never a publications-only one (1.1.9
+would follow it as a stream). It is the file 1.1.9 reads: 1.1.9 follows
 each of its records from its cursor, and from the lane's beginning when it
 has none, so a subscription that starts at the producer's current batch is
 never in it, and a node rolled back to 1.1.9 does not read such a lane from
@@ -235,7 +315,7 @@ lane `subscriptions.dss` holds is kept as it holds it, whether or not
 `subscriptions.dss`, so a crash between the two writes cannot bring an
 unsubscribed lane back from `follows.dss`. An unsubscribe made while the node
 ran 1.1.9 (a rollback) removes the lane from `follows.dss` only: it comes
-back with the next 1.2.0 start; unsubscribe again then.
+back with the next 1.1.10 or later start; unsubscribe again then.
 
 A file whose bytes do not decode at start is moved aside
 (`subscriptions.dss.unreadable-<time>`, likewise `follows.dss`), never
@@ -247,12 +327,23 @@ subscriptions. A file whose read fails (permission, an I/O error) is left
 where it is: the node stays so, the alert names the error, and the next
 start that reads the file loads it.
 
-A subscription whose `SYNC_FILTER` names a field this build does not know
-(written by a later version, then rolled back) is not run: the alert
-`subscription_refused` names the lane and the field, the lane is neither
-followed nor imported, and its record is written back as it was read. The
-other lanes run. To subscribe the lane again with this build, unsubscribe it
+A subscription whose `SYNC_FILTER` this build cannot read (written by a
+later version, then rolled back) is not run: a field it does not know, a
+value of a known field it does not read (`start=<a later start>`), or a
+filter that does not parse. The alert `subscription_refused` names the lane
+and the field or the filter, the lane is neither followed nor imported, and
+its record is written back byte for byte as each file held it (its status,
+times, rates and `ERROR` included; the refusal is in the alert and in `sync
+subscriptions`, not in the file). The other lanes run. To subscribe the lane again with this build, unsubscribe it
 first.
+
+A publications-only subscription is written with its own field (`stream=none`),
+not as a value of `publications`: 1.1.10, 1.1.11 and 1.1.12 hold a field they
+do not know as above, but 1.1.11 and 1.1.12 read an unknown value of
+`publications` as a file that does not decode, which sets the whole file
+aside. Rolled back to any of them, such a subscription is not followed as a
+stream and its publications are not imported until the node runs 1.1.13 or
+later again; the other lanes run.
 
 ## Updating a node from 1.1.9
 
@@ -283,10 +374,10 @@ The ledger and the config are left as they are. An update that fails its
 health check rolls back to 1.1.9 by itself, and 1.1.9 imports through them
 again; the converted subscriptions are in `subscriptions.dss`, which 1.1.9
 does not read, so it does not read their lanes from the beginning. When the
-node runs 1.2.0 again it finds the conversion record and the subscriptions
+node runs 1.1.10 or later again it finds the conversion record and the subscriptions
 as it left them, and 1.1.9's follows with their newest cursors.
 
-Until the producer runs 1.2.0 too, a converted subscription waits (its
+Until the producer runs 1.1.10 or later too, a converted subscription waits (its
 `last error` names the missing statement) while the lane's `$PNM`
 publications import, and starts at the producer's current batch once the
 producer states the lane. Every start with a removed key in the config
@@ -301,12 +392,12 @@ them. A new node (an empty storage path) whose config carries
 |---|---|---|
 | `POST /api/v1/sync[?start=current\|beginning][&force=1]` | admin | one size-prefixed `$DSS`, `REQUESTED_ACTION` Subscribe with `PROVIDER_PEER_ID`: subscribe (202), or 409 `first_read_refused`, 400 for a producer that is not trusted; a `RETENTION` in the frame decides the default start and is set on the lane only when the subscription is made |
 | `POST /api/v1/sync?acknowledge_unread=1` | admin | Subscribe naming an existing subscription: clears what a refused cursor left unread on it (`sync subscribe --acknowledge-unread`) |
-| `POST /api/v1/sync?publications=keep\|stream` | admin | Subscribe that keeps (or stops keeping) the lane's publications; naming an existing subscription, it changes only that (`sync subscribe --publications`) |
+| `POST /api/v1/sync?publications=keep\|stream\|only` | admin | Subscribe that keeps (or stops keeping) the lane's publications, or (`only`) imports the lane from its publications alone with no stream and no start (`start` is refused with it); naming an existing subscription, it changes only that (`sync subscribe --publications`) |
 | `POST /api/v1/sync` | admin | Unsubscribe, with or without `PROVIDER_PEER_ID` |
 | `GET /api/v1/sync/plan?schema=&provider_id=&source=&from=[&start=]` | admin | the first read, as JSON, without subscribing |
 | `GET /api/v1/sync/subscriptions` | admin | the followed lanes, as JSON |
 | `GET /api/v1/sync/ledger` | admin | the 1.1.9 ledger's and allow list's lanes and their producers, as JSON |
-| `GET /api/v1/sync[/{schema}/{provider}/{source}]` | anyone | `$DSS` per lane: a followed lane reads `SUBSCRIBED`, `SYNC_PROTOCOL` `flatsql-sync read-chunk follow`, `TOTAL_ROWS` the producer's current batch |
+| `GET /api/v1/sync[/{schema}/{provider}/{source}]` | anyone | `$DSS` per lane: a followed lane reads `SUBSCRIBED`, `SYNC_PROTOCOL` `flatsql-sync read-chunk follow` (`dataset publications ($PNM)` for a publications-only lane), `TOTAL_ROWS` the producer's current batch |
 
 The `$DSS` `Sync` action is refused: a followed lane is always current.
 
@@ -314,4 +405,10 @@ On the wire, the statement is an unfollowed `read-chunk` naming the lane and
 no batch, with the filter `PROJECTION` = `STATEMENT`; the answer is one `$QRP`
 page with `BATCH_ID`, `TOTAL_COUNT` (the batch's records), `RESUME_CURSOR`
 (the present position) and one row of `BATCH_RECORDS`, `BATCH_BYTES`,
-`LANE_RECORDS`, `LANE_BYTES` (from the lane counters, as above).
+`LANE_RECORDS`, `LANE_BYTES`. `LANE_RECORDS` and `LANE_BYTES` count batch
+memberships, not distinct records: a record two of the lane's batches hold
+counts in each.
+
+A producer logs each read a follower asks of a lane, with what it took:
+`flatsql-sync: statement of …`, `batch list page of … batch <id>`, `records by
+CID of … batch <id>`, `followed stream opened of …`, each `for <peer>`.

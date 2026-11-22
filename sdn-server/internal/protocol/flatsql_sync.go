@@ -320,8 +320,9 @@ func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, p
 		if req.q.FOLLOW() || fetched || req.batchID != "" || req.providerID == "" || req.sourceName == "" || req.cursor != "" {
 			return errors.New("a lane's statement is one unfollowed read-chunk naming the lane and no batch, with PROJECTION STATEMENT alone")
 		}
+		began := time.Now()
 		var frame []byte
-		if err := h.boundedWork(ctx, peerID, false, followStatementBound, func(read context.Context) error {
+		err := h.boundedWork(ctx, peerID, false, followStatementBound, func(read context.Context) error {
 			if followWorkFault != nil {
 				if err := followWorkFault(read, query.SourceName); err != nil {
 					return err
@@ -330,10 +331,11 @@ func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, p
 			var err error
 			frame, err = laneStatementPage(activeStore, query)
 			return err
-		}); err != nil {
-			return err
+		})
+		if err == nil {
+			_, err = w.Write(frame)
 		}
-		_, err := w.Write(frame)
+		logFollowerRead("statement", peerID, req, began, err)
 		return err
 	}
 	if listed || fetched {
@@ -343,10 +345,15 @@ func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, p
 		if listed && projection != syncwire.ProjectionCID {
 			return fmt.Errorf("unsupported PROJECTION %q", truncateName(projection))
 		}
+		began := time.Now()
+		what := "records by CID"
+		if listed {
+			what = "batch list page"
+		}
 		var frame []byte
 		var records []*storage.Record
 		var asked int
-		if err := h.boundedWork(ctx, peerID, true, followStatementBound, func(context.Context) error {
+		err := h.boundedWork(ctx, peerID, true, followStatementBound, func(context.Context) error {
 			var err error
 			if listed {
 				frame, err = batchCIDPage(activeStore, req)
@@ -354,20 +361,23 @@ func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, p
 				records, asked, err = batchRecords(activeStore, req, named)
 			}
 			return err
-		}); err != nil {
-			return err
+		})
+		if err == nil {
+			if listed {
+				_, err = w.Write(frame)
+			} else {
+				err = syncwire.WriteFollowPage(w, activeStore, &datasync.Page{Schema: req.schema, Limit: asked}, records, syncwire.FollowStatement{})
+			}
 		}
-		if listed {
-			_, err := w.Write(frame)
-			return err
-		}
-		return syncwire.WriteFollowPage(w, activeStore, &datasync.Page{Schema: req.schema, Limit: asked}, records, syncwire.FollowStatement{})
+		logFollowerRead(what, peerID, req, began, err)
+		return err
 	}
 	if req.q.FOLLOW() {
 		rw, ok := w.(io.ReadWriter)
 		if !ok {
 			return errors.New("a followed read needs a two-way stream")
 		}
+		logFollowerRead("followed stream opened", peerID, req, time.Now(), nil)
 		return h.followReadChunk(ctx, rw, activeStore, query, peerID, req)
 	}
 	var page *datasync.Page
@@ -380,6 +390,22 @@ func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, p
 		return err
 	}
 	return syncwire.WriteScanPage(w, activeStore, page, records)
+}
+
+// logFollowerRead logs one read a follower asked of a lane (its statement, a
+// page of a batch's list, records by CID, a followed stream), with what it
+// took: these are the reads a follower costs the producer.
+func logFollowerRead(what string, peerID peer.ID, req syncRequest, began time.Time, err error) {
+	lane := fmt.Sprintf("%s %s/%s", req.schema, truncateName(req.providerID), truncateName(req.sourceName))
+	if req.batchID != "" {
+		lane += " batch " + truncateName(req.batchID)
+	}
+	if err != nil {
+		log.Infof("flatsql-sync: %s of %s for %s failed after %s: %s", what, lane, peerID.ShortString(), time.Since(began).Round(time.Millisecond),
+			boundedRefusalReason(err.Error()))
+		return
+	}
+	log.Infof("flatsql-sync: %s of %s for %s in %s", what, lane, peerID.ShortString(), time.Since(began).Round(time.Millisecond))
 }
 
 // followQuiet is how long a followed read waits for new records before it

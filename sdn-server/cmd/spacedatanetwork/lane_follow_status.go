@@ -16,7 +16,7 @@ func laneFollows(n *node.Node) func() []api.LaneFollow {
 		out := make([]api.LaneFollow, 0, len(statuses))
 		for _, s := range statuses {
 			pending := ""
-			if s.Start == node.FollowStartCurrent && s.Cursor == "" {
+			if s.Start == node.FollowStartCurrent && s.Cursor == "" && !s.PublicationsOnly {
 				pending = node.FollowStartCurrent
 			}
 			var unreadSince time.Time
@@ -30,7 +30,7 @@ func laneFollows(n *node.Node) func() []api.LaneFollow {
 				TransferMs:            s.TransferMs, VerifyMs: s.VerifyMs, StoreMs: s.StoreMs, LastReceivedAt: s.LastReceivedAt,
 				Connected: s.Connected, Error: s.LastError,
 				CurrentBatch: s.CurrentBatch, StatedBatch: s.Stated.BatchID, StatedRecords: s.Stated.Records, Lag: s.Lag,
-				Unread: s.UnreadText(), UnreadSince: unreadSince, KeepPublications: s.KeepPublications})
+				Unread: s.UnreadText(), UnreadSince: unreadSince, KeepPublications: s.KeepPublications, PublicationsOnly: s.PublicationsOnly})
 		}
 		return out
 	}

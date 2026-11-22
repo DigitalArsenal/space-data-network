@@ -84,6 +84,12 @@ const (
 	// not followed or imported, its record is kept as it is, and the other
 	// lanes run.
 	KindSubscriptionRefused = "subscription_refused"
+	// KindPublicationMisstated: a publication of a subscribed lane (subject:
+	// the lane) whose signed DPM states sizes it does not keep: a shard or
+	// index larger than stated, more records than stated, or none stated.
+	// Nothing past the stated size is fetched and none of its records is
+	// stored; it is not fetched again.
+	KindPublicationMisstated = "publication_misstated"
 	// KindPublicationFailed: one of this node's own dataset publications
 	// (subject: its lane) failed or was cut before it completed.
 	KindPublicationFailed = "publication_failed"
@@ -246,6 +252,20 @@ func (r *Registry) Raise(kind, subject, severity, errText string) {
 		for _, fn := range hooks {
 			fn(snapshot, true)
 		}
+	}
+}
+
+// Restate replaces the text of an active alert without counting a new
+// failure: what is still wrong changed (part of it was fixed), and nothing
+// failed again. It is a no-op on an alert that is not active.
+func (r *Registry) Restate(kind, subject, errText string) {
+	if r == nil || kind == "" || errText == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, ok := r.active[alertKey{kind: kind, subject: subject}]; ok {
+		existing.LastError = errText
 	}
 }
 

@@ -109,6 +109,59 @@ is read for publication once. Shard and index files that no publication row
 names (what a publication that never completed leaves) are removed once a
 publication completes; the published ones stay.
 
+`TestPublicationUpdateRestartWaitsRealDaemons` runs the producer from a
+bundle and makes the update helper's shutdown handshake while a
+150,000-record batch is being published. The node answers that it waits at
+most 30 minutes (`waitBeforeStopSeconds` 1800) for its one running
+publication (`runningPublications` 1); `spacedatanetwork status` prints
+`update_stop_wait=dataset-publications running=1`; a publication of another
+batch requested meanwhile answers HTTP 503 and is kept. The running
+publication completes and answers its client before the node logs
+"Shutting down...". Started again, the node publishes the refused batch by
+itself and does not read the completed one again.
+
+`TestPublicationInterruptedRedoneRealDaemons` stops the producer (SIGINT)
+while a 150,000-record batch is being published. At the next start the node
+logs the publication as failed at the step "interrupted by the node's stop",
+publishes the batch again (the batch is read for publication twice in all:
+the interrupted run and its redo; deciding to redo it reads no record) and
+the lane's `publication_failed` alert is clear once it completes; a further
+restart publishes nothing again.
+
+`TestPublicationInterruptedSupersededRealDaemons` runs on a snapshot lane
+(`snapshot_batches`). It interrupts the publication of a 150,000-record
+batch, then starts the producer from a build (`sdn_e2e_follow_faults`) that
+handles the mark of a `lateredo-` lane only once the test opens a gate (a
+file in the folder `SDN_E2E_PUBLICATION_GATES` names), publishes a newer
+batch of the lane meanwhile, and stops it. At the next start the node logs
+that the older batch is not published again because the lane published the
+newer one after it, and removes the mark: the older batch is never read for
+publication again and never completes, and the lane has no alert. Then a
+third batch is interrupted the same way, and at the next start a fourth
+batch (`heldlane-`, which waits at its own gate once it holds the lane)
+holds the lane when the test opens the redo's gate: the redo's first check
+passes, the node reports the third batch interrupted and starts it again,
+the fourth batch completes while the redo waits for the lane, and once the
+redo holds the lane it finds the fourth batch's series and drops the third
+batch, clearing its report, without reading it.
+
+`TestPublicationInterruptedPartsRealDaemons` runs on a lane with no
+`snapshot_batches`, whose batches are parts. Three parts are requested in
+turn (the first 150,000 records, the two others waiting for the lane behind
+it) and the node is stopped, which leaves three marks. At the next start
+every part is reported interrupted and published again, in the order the
+parts were requested, each once and whole; no part is dropped, no mark is
+left and the lane has no alert.
+
+`TestPublicationInterruptedCrashBoundRealDaemons` runs a build
+(`sdn_e2e_follow_faults`) whose publications of a `crash-` lane end the
+process. The publication of a batch ends it; at each of the next three
+starts the mark's attempt count (1, 2, 3) is written before the attempt and
+the process ends again. At the fourth start the node reports the
+publication FAILED, given up after 3 attempts, raises the lane's
+`publication_failed` alert and removes the mark; a fifth start handles
+nothing.
+
 `TestPublicationFailureRealDaemons` runs the CelesTrak GP ingest flow of
 `space-data-network-modules` (`SDN_E2E_MODULES`, the modules checkout; the
 test fails when it is set and the flow is missing, and skips when it is not
@@ -119,6 +172,139 @@ lane, the batch and the step, raises the lane's `publication_failed` alert,
 and the flow's run ends with an error. A publication of another batch of the
 lane and an announcement of its existing publications complete and leave the
 alert raised; a publication of the failed batch clears it.
+
+`TestPublicationAlertStaysWhenLaterRunsCarryItRealDaemons` runs the same
+flow three times, as its schedule does. The first run's publication fails
+(the same blocked shard directory) and the alert says no publication of the
+whole failed batch (two records) completed. The second run's pull returns
+one of the two records, the third both (in another order, so another batch);
+each run publishes a batch of its own, and the alert stays after both: a
+publication of another batch never clears a failed batch. A publication of
+the failed batch whole clears it, and the check after it finds the batch
+published: the alert stays clear.
+
+`TestPublicationManualRunOutlivesClientRealDaemons` runs the same flow by
+hand on a node whose GP origin answers after 20 s, so every run lasts longer
+than its client waits. `apps run --timeout 4s` stops waiting, says the run
+continues and how to see its result, and exits non-zero; the run ends ok on
+the node and `apps status` shows it. `apps run` of a running run joins it,
+and SIGINT stops it waiting with the run continuing to an ok end. A raw
+run-now request whose client gives up after 4 s (the shape of the 2026-11-17
+cut-off) leaves the run to end ok. `apps run --detach` returns at once, and
+`apps cancel` ends the run as cancelled by the operator. A forced request
+(and `apps run --force`) that joins a run started without force is told the
+force does not apply. `apps run` follows its own run by id: when that run is
+cancelled and another starts at once, the command reports the cancelled run
+and exits non-zero.
+
+`TestPublicationManualRunStopsWithNodeRealDaemons` runs the flow by hand on
+a node whose GP origin answers after two minutes. A non-forced run cancelled
+by the operator gives back its attempt in the provider's minimum interval:
+the next non-forced run starts. A run-now request waits for that run, and
+the node is stopped (SIGTERM): the request is answered within 10 s, saying
+the node is stopping, and the admin server's shutdown is not held to its
+bound.
+
+`TestPublicationManualRunBoundRealDaemons` runs the flow by hand on a node
+whose service has `execution_timeout: 6s` and whose origin answers after
+30 s: the run ends at its bound, saying so.
+
+`TestPublicationAlertPartialFailureRealDaemons` fails a three-record batch's
+publication, one record per window, after it wrote publication rows:
+`SDN_E2E_PUBLICATION_FAULT=announce@2` fails the second window's
+announcement, `SDN_E2E_PUBLICATION_FAULT="record completion"` fails the
+recording of the completion after every window was announced (the fault
+fires once per process). The alert says no publication of the whole batch
+completed. A publication of a batch carrying one of them leaves the alert as
+it was, and retention lists no series made of the failed publication's rows.
+A second batch with the same three records fails at its first announcement.
+A publication of a batch carrying all three completes and both failed
+batches stay; a publication of each of them whole clears the alert, and the
+check of each after it finds it published: the alert stays clear.
+
+`TestPublicationAlertBatchGainedRecordsRealDaemons` publishes a batch of two
+records, stores a third in it, and fails its republication at the third
+window's announcement (`SDN_E2E_PUBLICATION_FAULT=announce@3`); a second
+batch holding the third record fails too. The alert says one of the three
+records of the first batch arrived after its last completed publication,
+and that no publication of the whole second batch completed. An
+announcement of the batch's existing publications announces the completed
+publication's window only. The publications of an unrelated batch and of a
+batch holding the first two records leave the alert as it was. A
+publication of the whole first batch removes it from the alert, which stays
+naming the second batch (the first batch holds its record, but is another
+batch); a publication of the whole second batch clears it, and the check
+after it finds that batch published: the alert stays clear.
+
+`TestPublicationAlertGainedAfterFailureRealDaemons` stores two records in a
+batch and fails its publication, stores a third record in it and fails its
+publication again, and publishes another batch holding the first two
+records: the alert stays, saying no publication of the whole batch (three
+records) completed. A publication of the whole batch clears it, and the
+check after it finds the batch published as it is.
+
+`TestPublicationAlertRestartRealDaemons` fails a batch's publication and
+restarts the node: the alert is raised again at start, and the batch is
+checked once the node answers ready. A publication of the whole batch
+clears it, and the node restarted again raises no alert.
+
+`TestPublicationAlertSupersededBatchRealDaemons` fails a batch's publication
+on a replace-current node, stores a batch of other records and supersedes
+the lane by it (`POST /api/v1/admin/store/supersede`, the store's
+replace-current eviction): the supersede prompts a check of the failed
+batch, which holds no records any more, and the alert clears, the log
+saying so, before any publication of the lane.
+
+`TestPublicationAlertFailureDuringClearRealDaemons` holds the clearing of an
+alert for 20 s after it was decided
+(`SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD=20s`) by the publication of the whole
+failed batch, and fails another batch's publication meanwhile: after the
+hold the alert is active and names that batch, and after the check of the
+first batch it still names the other batch and not the first.
+
+`TestPublicationAlertVerifyCheckErrorRealDaemons` fails a batch's
+publication, then publishes the whole batch on a node whose check verifying
+that publication fails (`SDN_E2E_PUBLICATION_CHECK_FAULT=1` stands for a
+store error such as the 30 s bound on the read of the batch's series rows;
+it fires once per process). The publication clears the alert when it is
+reported; the failed check raises it again, saying the batch could not be
+checked, and it stays. The restarted node raises it again from its row; the
+check once the node is ready finds the batch published and clears it, and
+the node restarted again raises nothing.
+
+`TestPublicationAlertOtherBatchNoCreditRealDaemons` fails a batch of two
+records and publishes another batch holding both: the alert stays. A
+publication of the whole failed batch clears it.
+
+`TestPublicationAlertRecordsDuringPublicationRealDaemons` holds a
+publication of the whole failed batch for 15 s after it exported its set
+(`SDN_E2E_PUBLICATION_COMPLETION_HOLD=15s`) and stores a third record in the
+batch meanwhile. The completed publication removes the batch from the alert
+when it is reported; the check after it finds the batch holds a record that
+publication did not export, and the alert is raised again, saying 1 of its 3
+records arrived after its last completed publication. A publication of the
+batch as it is now clears it.
+
+`TestPublicationAlertRetractedLaneRealDaemons` fails a batch's publication
+and a publication of the lane's newest records, then retracts the lane
+(`POST /api/v1/admin/dataset-updates/retract?apply=true`): both failed
+scopes go at the retraction, the alert is clear when the retraction
+answers, and the restarted node raises nothing.
+
+`TestPublicationAlertCheckCostRealDaemons` publishes 50 batches, batch i
+holding a record R_i, then fails a batch holding R_1 to R_50: the node's log
+names one fingerprint for the check, of the failed batch itself, and none of
+the 50.
+
+`TestPublicationAlertHeadPublicationRealDaemons` fails a three-record batch's
+publication, then publishes a head of that batch (`limit: 1`) and a head of
+the lane (no batch): neither clears the alert. A publication of the whole
+batch clears it.
+
+`TestPublicationManualRunCancelByIDRealDaemons` starts a manual run, cancels
+it, and starts another. A cancel naming the first run answers 404 and the
+second keeps running; a cancel naming the second ends it, and `apps cancel`
+(no id) ends a third.
 
 `TestPublicationSlowFlowRealDaemons` runs the same flow by hand while a
 300,000-record publication of the same lane runs, on a node whose admin
@@ -170,7 +356,7 @@ arrives.
 
 `TestPublicationUpgradeRealDaemons` needs `SDN_E2E_V119_BINARY` (a build of
 tag v1.1.9; `./scripts/ci-local.sh publication` downloads the published
-archive for groups `all` and `publication-4`). On 1.1.9 a receiver imports
+archive for groups `all` and `publication-6`). On 1.1.9 a receiver imports
 two lanes through `peers.trusted_import` and its ledger; updated alone, it
 converts them to subscriptions kept in `subscriptions.dss` (not in
 `follows.dss`, which 1.1.9 reads), leaves the ledger in place, loses no
@@ -225,6 +411,35 @@ next start after the permission is back loads it.
 `SYNC_FILTER` names a field this build does not know raises
 `subscription_refused` (lane and field), imports nothing and is written back
 as it was; the other lane keeps importing; unsubscribed, its alert clears.
+
+`TestPublicationSubscriptionFilterValueRealDaemons`: a `SYNC_FILTER` whose
+known field holds a value this build does not read, beside an unknown field
+(`start=from-the-next-batch&x=1`), refuses only that subscription
+(`subscription_refused`); the file is not moved aside and the other lane
+keeps importing.
+
+`TestPublicationRefusedSubscriptionKeptRealDaemons`: a refused subscription
+whose record carries a status, a last synced time, an `ERROR`, rates and
+times is in `subscriptions.dss` byte for byte as it was after the file is
+written again (the other lane's cursor moved); the refusal shows in `sync
+subscriptions`, not in the file.
+
+`TestPublicationMisstatedSizesRealDaemons` (a producer built with the tag
+`sdn_e2e_follow_faults`, whose "overstate-", "understate-bytes-" and
+"understate-records-" lanes' manifests state a shard of
+3,689,348,814,741,910,324 bytes, half the shard's bytes, or one record fewer
+than the shard holds): of four publication-only lanes (OEM) the honest one
+imports; the overstated one stops at the running guard (`follow_stopped`
+naming the stated size) and the understated ones raise
+`publication_misstated` naming both figures; none of their records is stored,
+also after a restart and its catch-up.
+
+`TestPublicationDeferredWaitBoundRealDaemons` (a receiver of that build, whose
+"never-" lane opens no stream and whose "late270-" lane opens its first stream
+270 s after it starts): the "never-" lane's publication waits for its stream
+and is imported within 5 minutes and 50 s of the lane's start, although the
+"late270-" lane's settled stream ran the catch-up and reset its timer to its
+5-minute interval at about 270 s.
 
 `TestPublicationStorePanicReleasesReservationRealDaemons` (a receiver built
 with the tag `sdn_e2e_follow_faults`, or `SDN_E2E_PUBLICATION_FOLLOW_FAULTS_BINARY`):

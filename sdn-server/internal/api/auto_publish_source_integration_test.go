@@ -109,7 +109,7 @@ func TestAutoPublisherSourceReplaysAllRawHashBatchesAfterStartup(t *testing.T) {
 	defer consumer.Close()
 	options := storage.DatasetPublicationReplayOptions{
 		PNM: announcer.announcement.PNM, ProviderPublicKey: mustLibp2pEd25519(t, publicKey), WorkDir: filepath.Join(dir, "replay"),
-		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+		FetchByCID: func(_ context.Context, cid string, _ int64) ([]byte, error) {
 			if body, ok := pinned[cid]; ok {
 				return body, nil
 			}

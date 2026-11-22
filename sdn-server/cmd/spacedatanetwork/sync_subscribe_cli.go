@@ -1,7 +1,7 @@
 package main
 
 // sync subscribe / unsubscribe / subscriptions: a node imports only the
-// lanes it subscribes to (1.2.0). Every command goes through the running
+// lanes it subscribes to (1.1.10). Every command goes through the running
 // daemon's admin API, signed in with the node's root key the way `apps run`
 // signs in (admin_client.go): no credential passes through the operator.
 //
@@ -73,7 +73,14 @@ stream holds the producer's current batch. --publications keep also fetches
 and imports each publication, so this node holds and serves their files: a
 gateway host whose readers fetch the producer's publications from it sets it.
 The lane's retention rule decides which publications stay. On a lane already
-followed, --publications keep|stream changes only that.`,
+followed, --publications keep|stream changes only that.
+
+--publications only imports the lane from the producer's publications alone:
+no stream is opened and the producer is asked nothing for the lane (no
+statement, no batch list, no page), so there is no first read and no --start.
+Use it for a large keep-all lane of a producer that publishes it. Set on a
+followed lane it stops the stream; --publications keep or stream on such a
+lane starts the stream at the producer's current batch.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if syncSubscribeFlags.FromLedger {
 			return runSyncSubscribeFromLedger(cmd, syncSubscribeFlags)
@@ -116,7 +123,7 @@ func init() {
 	f.BoolVar(&syncSubscribeFlags.Yes, "yes", false, "with --from-ledger: subscribe (without it the plan is printed only)")
 	f.BoolVar(&syncSubscribeFlags.JSON, "json", false, "print machine-readable JSON")
 	f.BoolVar(&syncSubscribeFlags.Acknowledge, "acknowledge-unread", false, "accept the records a refused cursor left unread on this subscription (subscribes nothing)")
-	f.StringVar(&syncSubscribeFlags.Publications, "publications", "", "keep: also fetch and import each of the lane's publications, so this node serves their files; stream: do not (the default for a new subscription)")
+	f.StringVar(&syncSubscribeFlags.Publications, "publications", "", "keep: also fetch and import each of the lane's publications, so this node serves their files; stream: do not (the default for a new subscription); only: import the lane from its publications alone, with no stream")
 	addSessionTokenFlag(syncSubscribeCmd)
 
 	u := syncUnsubscribeCmd.Flags()
@@ -206,10 +213,31 @@ func requireLane(o syncSubscribeOptions) error {
 	return nil
 }
 
+// planLane reads a lane's plan, which has the node read the producer's
+// statement. A lane held publications only is not planned unless the command
+// names the mode it changes to: its producer is asked nothing, and a command
+// repeated without --publications would otherwise ask it.
+func planLane(ctx context.Context, c *adminClient, o syncSubscribeOptions, plan *api.LanePlan) error {
+	if o.Publications == "" {
+		var list syncSubscriptionList
+		if _, err := syncAPICall(ctx, c, http.MethodGet, api.SyncSubscriptionsPath, "", nil, &list); err != nil {
+			return err
+		}
+		schema := syncwire.NormalizeSchema(o.Schema)
+		for _, s := range list.Subscriptions {
+			if s.PublicationsOnly && syncwire.NormalizeSchema(s.Schema) == schema && s.ProviderID == o.ProviderID && s.SourceName == o.SourceName && s.Producer == o.From {
+				return fmt.Errorf("%s %s/%s from %s is subscribed publications only: nothing is changed and the producer is not asked; --publications keep or --publications stream changes it and reads the producer's statement", schema, o.ProviderID, o.SourceName, o.From)
+			}
+		}
+	}
+	_, err := syncAPICall(ctx, c, http.MethodGet, api.SyncPlanPath+"?"+planQuery(o), "", nil, plan)
+	return err
+}
+
 // subscribeOne plans and, when it fits or force, subscribes.
 func subscribeOne(ctx context.Context, c *adminClient, o syncSubscribeOptions) (api.LanePlan, bool, error) {
 	var plan api.LanePlan
-	if _, err := syncAPICall(ctx, c, http.MethodGet, api.SyncPlanPath+"?"+planQuery(o), "", nil, &plan); err != nil {
+	if err := planLane(ctx, c, o, &plan); err != nil {
 		return plan, false, err
 	}
 	if plan.Refusal != "" && !o.Force {
@@ -234,6 +262,9 @@ func runSyncSubscribe(cmd *cobra.Command, o syncSubscribeOptions) error {
 	if err := requireLane(o); err != nil {
 		return err
 	}
+	if o.Publications == "only" {
+		return runSyncSubscribePublicationsOnly(cmd, o)
+	}
 	c, err := newAdminClient(cmd)
 	if err != nil {
 		return err
@@ -255,6 +286,35 @@ func runSyncSubscribe(cmd *cobra.Command, o syncSubscribeOptions) error {
 	if !subscribed {
 		return fmt.Errorf("not subscribed: %s (--force subscribes anyway)", plan.Refusal)
 	}
+	return nil
+}
+
+// runSyncSubscribePublicationsOnly subscribes to a lane imported from its
+// publications alone (--publications only), or turns an existing
+// subscription to that. No first read is planned: the producer is asked
+// nothing, and each publication is imported under the running guard.
+func runSyncSubscribePublicationsOnly(cmd *cobra.Command, o syncSubscribeOptions) error {
+	if o.Start != "" {
+		return fmt.Errorf("--publications only opens no stream, so it takes no --start (%s)", o.Start)
+	}
+	c, err := newAdminClient(cmd)
+	if err != nil {
+		return err
+	}
+	if _, err := syncAPICall(cmd.Context(), c, http.MethodPost, api.SyncPath+"?publications=only", publicationStreamMediaType,
+		api.EncodeDSSFollow(o.Schema, o.ProviderID, o.SourceName, o.From), nil); err != nil {
+		return err
+	}
+	schema := syncwire.NormalizeSchema(o.Schema)
+	if o.JSON {
+		return printJSON(cmd, map[string]any{"subscribed": true, "publications_only": true, "schema": schema, "provider_id": o.ProviderID,
+			"source_name": o.SourceName, "producer": o.From})
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "lane:        %s %s/%s\n", schema, o.ProviderID, o.SourceName)
+	fmt.Fprintf(out, "producer:    %s\n", o.From)
+	fmt.Fprintf(out, "first read:  none: the lane is imported from the producer's publications ($PNM); no stream is opened and the producer is asked nothing\n")
+	fmt.Fprintf(out, "subscribed: %s %s/%s from %s (publications only, no stream)\n", schema, o.ProviderID, o.SourceName, o.From)
 	return nil
 }
 
@@ -286,7 +346,7 @@ func writePlan(w io.Writer, p api.LanePlan) {
 	if p.StatementError != "" {
 		fmt.Fprintf(w, "statement:   none (%s)\n", p.StatementError)
 	} else {
-		fmt.Fprintf(w, "producer:    current batch %s: %d records, %s; lane: %d records, %s\n", p.BatchID, p.BatchRecords, humanBytes(p.BatchBytes), p.LaneRecords, humanBytes(p.LaneBytes))
+		fmt.Fprintf(w, "producer:    current batch %s: %d records, %s; lane: %d records counted per batch (a record two batches hold counts in each), %s\n", p.BatchID, p.BatchRecords, humanBytes(p.BatchBytes), p.LaneRecords, humanBytes(p.LaneBytes))
 	}
 	where := "the producer's current batch"
 	if p.Start == "beginning" {
@@ -351,7 +411,7 @@ func runSyncSubscribeFromLedger(cmd *cobra.Command, o syncSubscribeOptions) erro
 			if o.Yes {
 				plan, r.Subscribed, err = subscribeOne(ctx, c, lo)
 			} else {
-				_, err = syncAPICall(ctx, c, http.MethodGet, api.SyncPlanPath+"?"+planQuery(lo), "", nil, &plan)
+				err = planLane(ctx, c, lo, &plan)
 			}
 			if err != nil {
 				r.Error = err.Error()
@@ -455,6 +515,16 @@ func runSyncSubscriptions(cmd *cobra.Command, asJSON bool) error {
 		fmt.Fprintf(out, "%s %s/%s from %s\n", s.Schema, s.ProviderID, s.SourceName, s.Producer)
 		if !s.Since.IsZero() {
 			fmt.Fprintf(out, "  subscribed since: %s\n", s.Since.UTC().Format(time.RFC3339))
+		}
+		if s.PublicationsOnly {
+			fmt.Fprintf(out, "  publications only, no stream: each of the lane's publications is fetched and imported; the producer is asked nothing\n")
+			if s.Stopped != "" {
+				fmt.Fprintf(out, "  stopped: %s\n", s.Stopped)
+			}
+			if s.Error != "" {
+				fmt.Fprintf(out, "  last error: %s\n", s.Error)
+			}
+			continue
 		}
 		switch {
 		case s.Start != "":

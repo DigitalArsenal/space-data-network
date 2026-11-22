@@ -194,6 +194,10 @@ func writeUpdateRolloutState(out io.Writer, paths update.Paths) {
 		fmt.Fprintf(out, "update_failed=%s version=%s sequence=%d at=%s rolled_back=%t\n",
 			failure.UpdateID, failure.Version, failure.Sequence, failure.At, failure.RolledBack)
 	}
+	if wait := update.ReadStopWait(paths); wait != nil {
+		fmt.Fprintf(out, "update_stop_wait=%s running=%d pid=%d since=%s until=%s\n",
+			wait.For, wait.Running, wait.PID, wait.Since, wait.Until)
+	}
 }
 
 func init() {

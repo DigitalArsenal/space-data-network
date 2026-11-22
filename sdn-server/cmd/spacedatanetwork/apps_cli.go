@@ -4,8 +4,9 @@ package main
 // needs over a scheduled app: run it now.
 //
 // The $APPS feed (GET /api/apps) is anonymous, so 'apps list' needs no session.
-// 'apps run' drives a schedule and is Admin-gated, so it signs in through the
-// §19 root ceremony like every other gated command — no second authority path.
+// 'apps run', 'apps status' and 'apps cancel' (apps_run_cli.go) drive a
+// schedule and are Admin-gated, so they sign in through the §19 root ceremony
+// like every other gated command — no second authority path.
 //
 // Why this command exists at all: a timer-served ingest flow's FIRST tick is
 // one interval away (3 h for the CelesTrak GP catalog, 24 h for SATCAT). An
@@ -112,68 +113,6 @@ var appsListCmd = &cobra.Command{
 					src.SourceID, retrieved, src.LastPullSizeBytes, src.LastRecords, src.LastInserted)
 			}
 			fmt.Fprintln(out)
-		}
-		return nil
-	},
-}
-
-var appsRunCmd = &cobra.Command{
-	Use:   "run <app-id> [trigger-id]",
-	Short: "Run an app's schedule now instead of waiting for its next tick",
-	Long: `Run an app's schedule now.
-
-With no trigger-id, every timer the app declares is run in order — which for an
-ingest app is exactly one retrieval cycle per source. Each run is synchronous:
-the command returns when the app has finished, so a non-zero exit means the pull
-actually failed rather than merely failing to start.`,
-	Args: cobra.RangeArgs(1, 2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newAdminClient(cmd)
-		if err != nil {
-			return err
-		}
-		appID := strings.TrimSpace(args[0])
-		out := cmd.OutOrStdout()
-
-		triggers := []string{}
-		if len(args) == 2 {
-			triggers = append(triggers, strings.TrimSpace(args[1]))
-		} else {
-			discovered, err := appTriggerIDs(cmd, client, appID)
-			if err != nil {
-				return err
-			}
-			if len(discovered) == 0 {
-				return fmt.Errorf("app %q declares no timers to run", appID)
-			}
-			triggers = discovered
-		}
-
-		var failures []string
-		for _, trigger := range triggers {
-			path := fmt.Sprintf("/api/v1/modules/runtime/%s/schedules/%s/run",
-				pathEscapeSegment(appID), pathEscapeSegment(trigger))
-			var run struct {
-				Status     string `json:"status"`
-				Message    string `json:"message"`
-				StartedAt  string `json:"startedAt"`
-				FinishedAt string `json:"finishedAt"`
-				OutputSize int    `json:"outputSize"`
-			}
-			if err := client.postJSON(cmd.Context(), path, nil, &run, ""); err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", trigger, err))
-				fmt.Fprintf(out, "%s %s: FAILED: %v\n", appID, trigger, err)
-				continue
-			}
-			fmt.Fprintf(out, "%s %s: %s  %s -> %s  (%d bytes of results)\n",
-				appID, trigger, run.Status, run.StartedAt, run.FinishedAt, run.OutputSize)
-			if run.Status != "ok" {
-				failures = append(failures, fmt.Sprintf("%s: %s", trigger, run.Message))
-			}
-		}
-		if len(failures) > 0 {
-			return fmt.Errorf("%d of %d runs failed: %s",
-				len(failures), len(triggers), strings.Join(failures, "; "))
 		}
 		return nil
 	},

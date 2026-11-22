@@ -9,6 +9,8 @@ umask so the file is never readable by others.
 
 ---
 
+**An update's restart no longer cuts a dataset publication short.** Before it stops for an update the node finishes the publications that are running, for at most 30 minutes, and refuses new ones meanwhile; `spacedatanetwork status` prints `update_stop_wait=` while it waits. A publication refused because the node is stopping, for an update or any other stop, answers HTTP 503 with `Retry-After` (it answered 400). A lane or batch publication that a stop or a crash ends anyway, or that was refused while the node stopped, is published again once the next start is ready, unless it is older than 24 hours or, on a snapshot lane (`snapshot_batches`), its lane has published another batch since it was requested (checked again once the publication holds its lane). On any other lane, whose batches are parts each published once, every marked part is published again, oldest first. It is tried at most 3 times across starts, then reported failed, and the lane's alert stays raised until the batch is published. An interrupted one is first reported as failed at the step "interrupted by the node's stop", which raises the lane's `publication_failed` alert until it completes, so an operator's restart during a publication raises the alert for the minutes the publication takes again. The update helper waits that much longer for the daemon to exit, adding at most one hour to its stop grace whatever the daemon states.
+
 **Linux: a fresh node gets its key password file automatically.** The Linux
 kernel makes `/sys/class/dmi/id/product_uuid` readable only by root, so on
 most Linux machines a node that does not run as root cannot derive its
@@ -80,43 +82,103 @@ a system account (such as the package's `sdn`) counts now; for another
 account's node, pass `-c`. `install.sh` passes the node's own config to every
 command it runs.
 
----
+**A manual run is no longer cut off when its command stops waiting.**
+`spacedatanetwork apps run` gave up after about 65 seconds ("daemon
+unavailable") and the node then cancelled the run ("context canceled"), so a
+flow that needed longer never finished by hand. A manual run now belongs to
+the node: it runs to its end whatever the command does, within a bound (the
+flow service's `execution_timeout`, or 2 hours, including any wait for its
+`exclusive_group`). The node's stop cancels it and answers a request waiting
+for it at once. The command waits and
+says every 30 s that the run is still going; `--timeout <duration>` bounds
+the wait (the command then prints how to see the result and exits non-zero,
+and the run continues), `--detach` returns at once, Ctrl-C stops waiting
+(the run continues; `--cancel-on-interrupt` cancels it instead). The new
+`apps status <app-id> [trigger-id]` shows a run's state and result, and
+`apps cancel <app-id> [trigger-id]` cancels a running one; a cancelled run
+gives back its attempt in the provider's minimum interval, so the next
+manual run starts at once. A second `apps run` of a schedule that is running
+joins that run; `--force` does not apply to a run started without it, and
+the command says so. `apps run` follows its own run by id: when the node no
+longer knows it (a restart), the command says so and exits non-zero instead
+of reporting another run. Scripts use the same route:
+`POST .../schedules/<trigger-id>/run?detach=1`, then `GET ...?id=<id>`;
+`DELETE ...?id=<id>` cancels that run (404 when it is not the one running,
+so a cancel never ends another run), `DELETE` with no id cancels whichever
+runs. `apps run --cancel-on-interrupt` cancels its own run only. The
+dashboard's Run now waits for the run as before; a page closed meanwhile no
+longer cancels it.
 
-**Followed lanes of millions of records start, and a follower no longer
-wears its producer down.** Since 1.1.10 a subscription to a lane starts with
-the producer's statement of the lane. On a format 5 store the producer read
-every record of the lane twice to answer it whenever the lane holds more
-than one batch (a keep-all catalog lane of millions of records), so on the
-catalog node each read took 1 to 3 minutes and the statement outlasted the
-follower's 60 s wait. The follower asked again 30 s later while the producer
-went on reading for the stream it had reset. Those reads held the store
-engine's read lanes, so everything else queued behind them for minutes: the
-followers' small lanes never got a first page, and the node's own catalog
-publication failed at the engine's 5-minute request deadline. This release
-fixes both sides:
+**A publication alert is decided from the store, clears when its batch is
+published or gone, and survives a restart.** A `publication_failed` alert
+of a batch cleared only when that same batch was published, and a restart
+dropped it whether or not anything was published. The node now records each
+failed scope in the store and decides from the store when it clears. A
+failed batch clears when a completed publication of the whole batch exported
+the set it holds now (equal fingerprints), or when the batch holds no
+records any more (a replace-current lane superseded them, they expired, or
+the lane was retracted). A publication of another batch never clears it: if
+every record of a failed batch also sits in other, published batches, the
+alert still stays until that batch is published whole or its records go,
+and publishing the batch whole clears it. The batch is checked at each of
+its failures, after each completed publication of the whole batch, when a
+supersede or an expiry removes records of its lane, and at start once the
+node answers ready; a check costs one fingerprint of the failed batch,
+whatever the size of the lane. A completed publication of the whole batch
+clears it when it is reported; the check after it raises the alert again
+when records arrived in the batch while that publication ran. A retraction
+of the lane clears every failed scope of the lane. A batch the snapshot
+guard refused says what clears it (a newer batch superseding it, or the
+guard no longer refusing it) instead of advising a publication the guard
+refuses again. A failed head of a batch or of the lane, a failed
+publication of the whole lane, a failed announcement of existing
+publications, and a failed batch of a datastore lane clear when the same
+operation completes again; a publication of a head never clears a failed
+batch. The windows a publication wrote before it failed partway are never
+taken for a publication of the batch and are not announced again by an
+announcement of existing publications. At most 16 failed batches are tracked
+per lane; beyond them the alert says so and stays until a publication of the
+whole lane completes.
 
-- The producer answers a statement from its counters (the standard's newest
-  sequence and the counters of the lane's batches), without reading the
-  lane's records. The batch's and the lane's records and bytes it states are
-  the sums of those counters, so a record that two batches hold counts in
-  each. A followed stream from a lane's beginning no longer counts the lane
-  first.
-- Every read a follower asks for runs under its stream and stops when the
-  follower resets the stream or the connection ends. Each has a bound (a
-  statement 1 minute, a followed page 2 minutes), past which the producer
-  answers `busy`.
-- Other peers' reads can no longer starve the node's own publication. The
-  store engine serves reads on 4 interactive lanes and 1 bulk lane; at most
-  2 reads of other peers now run at once, and a follower's batch list no
-  longer runs on the bulk lane, so the node's own window probes and
-  fingerprint scans always have lanes of their own. A statement past the
-  limit is refused `busy` at once; other reads wait their turn.
-- The follower waits up to 5 minutes for a statement or a page, and after a
-  stream that delivered nothing waits 1 s, then twice as long after each
-  failure, up to 20 minutes (with 20% jitter), starting again at 1 s once a
-  page arrives. Meanwhile the lane's `$PNM` publications import, as before.
+**Retention releases the windows of a failed publication.** Node 1.1.11 and
+earlier adopted the windows a publication wrote before it failed (rows, pins
+and the announcements already sent) as a series of their batch at the lane's
+next completed publication, and kept them like any other series. They are
+now marked unfinished when written and never adopted, so the lane's retention
+(`publishing.retention` with `keep_series` set) retires their rows and
+unpins their shard, index and manifest CIDs at the lane's next completed
+publication, as it does for any row no series names. With `keep_series: 0`
+nothing is released, as before. A subscriber that fetched such a window from
+its announcement keeps its copy; the producer no longer serves it once
+retention released it. Windows an earlier release already adopted stay
+adopted.
 
-Both sides work with a 1.1.12 node on the other: a 1.1.12 follower gets the
-fast statement and its reset stops the producer's read; a 1.1.12 producer
-gets one statement request at a time per lane, waited for 5 minutes, instead
-of one every 90 s. `docs/SUBSCRIPTIONS.md` has the details.
+**Followers' reads can no longer take the producer's own engine lanes.**
+1.1.13 answers a lane's statement from counters and makes the follower back
+off; what a follower's other reads cost the producer was unbounded. The
+store engine serves reads on 4 interactive lanes and 1 bulk lane:
+
+- At most 2 reads of other peers run at once, so the node's own reads (its
+  publications' window probes and fingerprint scans, its API) always have
+  2 interactive lanes and the bulk lane. A statement past the limit is
+  refused `busy` at once, and the follower backs off; a followed page, a
+  batch's list or a fetch by content address waits for its turn.
+- A follower's batch list runs on an interactive lane, not on the bulk lane
+  the node's own publication scans use. On a copy of a production store
+  with seven lanes followed, the publication's scans no longer queue behind
+  followers' batch lists (up to 29 s in 1.1.13, none here).
+- A statement and a followed page run under their stream: when the follower
+  resets the stream or the connection ends, the producer's store read stops.
+  A statement has a bound of 1 minute and a followed page (or any other
+  `read-chunk` scan) 2 minutes, past which the producer answers `busy`.
+- A followed stream from the lane's beginning reads forward from the start
+  without counting the lane first.
+- The follower waits 5 minutes for a page (2 minutes before), longer than
+  the producer's bound, so a slow producer answers `busy` instead of being
+  asked again.
+
+A batch's list and a fetch by content address are not cut off when the
+follower leaves: each runs to its end in its slot. A page of a batch's list
+still walks the whole lane on a keep-all lane of millions of records (10 to
+16 s per 8,192 records on that copy), so `--publications only` remains the
+way to subscribe to such a lane.

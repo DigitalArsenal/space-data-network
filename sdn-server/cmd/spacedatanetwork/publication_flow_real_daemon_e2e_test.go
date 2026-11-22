@@ -27,6 +27,18 @@ const gpFlowLane = "OMM.fbs publication-e2e/celestrak-gp"
 // flows section ("" for none). It is not started.
 func gpFlowDaemon(t *testing.T, name, flows string) *publicationDaemon {
 	t.Helper()
+	return gpFlowDaemonServing(t, name, flows, func(fixture []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/csv")
+			w.Write(fixture)
+		}
+	})
+}
+
+// gpFlowDaemonServing is gpFlowDaemon with the GP origin's handler made by
+// serve from the parser's fixture.
+func gpFlowDaemonServing(t *testing.T, name, flows string, serve func(fixture []byte) http.HandlerFunc) *publicationDaemon {
+	t.Helper()
 	modules := os.Getenv("SDN_E2E_MODULES")
 	required := modules != ""
 	if !required {
@@ -51,10 +63,7 @@ func gpFlowDaemon(t *testing.T, name, flows string) *publicationDaemon {
 	if err != nil {
 		missing("CelesTrak parser fixture not found under %s: %v", modules, err)
 	}
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/csv")
-		w.Write(fixture)
-	}))
+	origin := httptest.NewServer(serve(fixture))
 	t.Cleanup(origin.Close)
 
 	d := newPublicationDaemon(t, publicationBinary(t), name, "", "", "keep-all")

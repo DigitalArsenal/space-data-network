@@ -47,7 +47,10 @@ package storage
 // that has no series for a lane yet (every store written before this change)
 // ADOPTS its existing rows as one series per batch when the lane's first new
 // series is recorded, so the first retention pass after an upgrade releases
-// the history accumulated before it.
+// the history accumulated before it. A window a publication wrote without
+// completing (it failed or was cut after the window's row was written) is
+// marked unfinished and never adopted: it is not a completed publication,
+// and retention releases it like any row no series names.
 
 import (
 	"context"
@@ -156,10 +159,76 @@ func (s *FlatSQLStore) initDatasetPublicationSeriesTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create dataset publication series members table: %w", err)
 	}
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sdn_dataset_publication_unfinished_windows (
+			schema_name TEXT NOT NULL,
+			provider_id TEXT NOT NULL DEFAULT '',
+			source_name TEXT NOT NULL DEFAULT '',
+			shard_cid TEXT NOT NULL,
+			PRIMARY KEY (schema_name, provider_id, source_name, shard_cid)
+		)
+	`); err != nil {
+		return fmt.Errorf("failed to create dataset publication unfinished windows table: %w", err)
+	}
 	if _, err := s.db.Exec(datasetPublicationRetractedTable); err != nil {
 		return fmt.Errorf("failed to create dataset publication retracted table: %w", err)
 	}
-	return nil
+	return s.initDatasetPublicationFailedScopesTable()
+}
+
+// A window's unfinished mark records that a publication of the lane wrote
+// the window and has not completed. UpsertUnfinishedDatasetShardPublication
+// writes it in the transaction that writes the window's publication row;
+// it is removed when a series that names the window is recorded
+// (RecordDatasetPublicationSeries), or, in the transaction that deletes the
+// row, when retention retires the last row of the lane with that shard CID.
+// A window still marked belongs to a publication that failed or was cut (an
+// error, a crash, a kill) after writing it: such a row is never adopted as
+// a legacy series, so it never counts as a completed publication, and
+// retention releases it like any row no series names.
+
+// UnfinishedDatasetPublicationWindow reports whether a window of the lane
+// (its shard CID) is marked unfinished: a publication wrote it and has not
+// completed (it is running, or it failed or was cut).
+func (s *FlatSQLStore) UnfinishedDatasetPublicationWindow(lane DatasetPublicationLane, shardCID string) (bool, error) {
+	lane = lane.normalized()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var one int
+	err := s.db.QueryRow(`
+		SELECT 1 FROM sdn_dataset_publication_unfinished_windows
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND shard_cid = ?`,
+		lane.SchemaName, lane.ProviderID, lane.SourceName, strings.TrimSpace(shardCID)).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the unfinished mark of publication window %s: %w", shardCID, err)
+	}
+	return true, nil
+}
+
+// unfinishedDatasetPublicationWindows is the lane's shard CIDs still marked
+// unfinished.
+func (s *FlatSQLStore) unfinishedDatasetPublicationWindows(lane DatasetPublicationLane) (map[string]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT shard_cid FROM sdn_dataset_publication_unfinished_windows
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ?`, lane.SchemaName, lane.ProviderID, lane.SourceName)
+	if err != nil {
+		return nil, fmt.Errorf("list %s unfinished publication windows: %w", lane.SchemaName, err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var cid string
+		if err := rows.Scan(&cid); err != nil {
+			return nil, err
+		}
+		out[cid] = true
+	}
+	return out, rows.Err()
 }
 
 // DatasetPublicationSeriesID is a deterministic id over a series' windows and
@@ -265,6 +334,30 @@ func (s *FlatSQLStore) LatestDatasetPublicationSeriesContext(ctx context.Context
 	return series, true, nil
 }
 
+// NewestDatasetPublicationSeries returns the batch and published_at of a
+// lane's newest recorded series of any batch scope, without members. It reads
+// one row of the lane's series: the lane's primary-key prefix, ordered by
+// published_at.
+func (s *FlatSQLStore) NewestDatasetPublicationSeries(ctx context.Context, lane DatasetPublicationLane) (batchID string, publishedAt time.Time, ok bool, err error) {
+	lane = lane.normalized()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var at int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT batch_id, published_at
+		FROM sdn_dataset_publication_series
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ?
+		ORDER BY published_at DESC, rowid DESC
+		LIMIT 1`, lane.SchemaName, lane.ProviderID, lane.SourceName).Scan(&batchID, &at)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", time.Time{}, false, nil
+		}
+		return "", time.Time{}, false, fmt.Errorf("newest %s publication series: %w", lane.SchemaName, err)
+	}
+	return batchID, time.Unix(0, at).UTC(), true, nil
+}
+
 // ListDatasetPublicationSeries lists a lane's series newest first, with members.
 func (s *FlatSQLStore) ListDatasetPublicationSeries(lane DatasetPublicationLane) ([]DatasetPublicationSeries, error) {
 	lane = lane.normalized()
@@ -327,7 +420,9 @@ func (s *FlatSQLStore) listDatasetPublicationSeriesLocked(lane DatasetPublicatio
 // rows of the lane that no recorded series names yet (every row written before
 // series existed, or by a path that records none) are first adopted as one
 // legacy series per batch, so retention always knows what each advertised row
-// belongs to. The windows this series published are never adopted.
+// belongs to. The windows this series published are never adopted, nor are
+// windows a publication wrote without completing
+// (UpsertUnfinishedDatasetShardPublication).
 func (s *FlatSQLStore) RecordDatasetPublicationSeries(series DatasetPublicationSeries, providerPeerID string) error {
 	if err := s.requireWritable("record dataset publication series"); err != nil {
 		return err
@@ -415,6 +510,15 @@ func (s *FlatSQLStore) writeDatasetPublicationSeries(lane DatasetPublicationLane
 				lane.SchemaName, lane.ProviderID, lane.SourceName, each.SeriesID, cid, strings.TrimSpace(member.Role)); err != nil {
 				return fmt.Errorf("record publication series member %s: %w", cid, err)
 			}
+			if strings.TrimSpace(member.Role) == PinLedgerRoleShard {
+				// The window is part of a completed series now.
+				if _, err := tx.Exec(`
+					DELETE FROM sdn_dataset_publication_unfinished_windows
+					WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND shard_cid = ?`,
+					lane.SchemaName, lane.ProviderID, lane.SourceName, cid); err != nil {
+					return fmt.Errorf("clear unfinished publication window %s: %w", cid, err)
+				}
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -442,6 +546,13 @@ func (s *FlatSQLStore) unrecordedDatasetPublicationSeries(lane DatasetPublicatio
 	if err != nil {
 		return nil, err
 	}
+	// A window a publication wrote and never completed is not legacy: it is
+	// what a failed or cut publication left, and adopting it would record it
+	// as a completed series.
+	unfinished, err := s.unfinishedDatasetPublicationWindows(lane)
+	if err != nil {
+		return nil, err
+	}
 	recorded := make(map[string]bool)
 	legacyAt := make(map[string]time.Time)
 	for _, each := range existing {
@@ -458,7 +569,7 @@ func (s *FlatSQLStore) unrecordedDatasetPublicationSeries(lane DatasetPublicatio
 	byBatch := map[string]*DatasetPublicationSeries{}
 	var order []string
 	for _, row := range rows {
-		if recorded[row.ShardCID] || row.ProviderID != lane.ProviderID || row.SourceName != lane.SourceName {
+		if recorded[row.ShardCID] || unfinished[row.ShardCID] || row.ProviderID != lane.ProviderID || row.SourceName != lane.SourceName {
 			continue
 		}
 		legacy := byBatch[row.BatchID]
@@ -816,7 +927,7 @@ func (s *FlatSQLStore) ApplyDatasetPublicationRetention(plan DatasetPublicationR
 	}
 
 	for _, row := range plan.RetireRows {
-		deleted, err := s.DeleteDatasetShardPublication(row)
+		deleted, err := s.retireDatasetShardPublication(lane, row)
 		if err != nil {
 			return result, err
 		}

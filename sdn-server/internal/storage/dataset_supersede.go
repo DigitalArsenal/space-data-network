@@ -252,6 +252,9 @@ func (s *FlatSQLStore) SupersedeSourceBatches(schemaName, providerID, sourceName
 			result.TagsDeleted, result.RecordsDeleted, result.Chunks,
 			time.Since(started).Round(time.Millisecond), result.MaxLockHold.Round(time.Millisecond))
 	}
+	if result.TagsDeleted > 0 || result.RecordsDeleted > 0 {
+		s.noteLaneRecordsRemoved(result.SchemaName, result.ProviderID, result.SourceName)
+	}
 
 	files, err := s.RemoveSupersededPublicationFiles(result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch)
 	result.FilesDeleted += files

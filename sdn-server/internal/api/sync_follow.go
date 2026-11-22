@@ -48,6 +48,10 @@ type LaneFollow struct {
 	// publications (?publications=keep): each is fetched and imported, so
 	// this node serves their files.
 	KeepPublications bool `json:"keep_publications,omitempty"`
+	// PublicationsOnly is set when the lane is imported from its
+	// publications alone (?publications=only): no stream runs, so the
+	// received counts, the batches and the connection stay empty.
+	PublicationsOnly bool `json:"publications_only,omitempty"`
 }
 
 // LaneSubscription is a subscription request (sync subscribe).
@@ -63,23 +67,27 @@ type LaneSubscription struct {
 	// existing subscription (?acknowledge_unread=1).
 	AcknowledgeUnread bool
 	// Publications is "keep" (each of the lane's publications is fetched and
-	// imported, so this node serves its files), "stream", or "" (a new
-	// subscription streams; an existing one is left as it is)
+	// imported, so this node serves its files), "stream", "only" (the lane
+	// is imported from its publications alone: no stream, no start), or ""
+	// (a new subscription streams; an existing one is left as it is)
 	// (?publications=).
 	Publications string
 }
 
 // LanePlan is a subscription's first read and whether this node takes it.
 type LanePlan struct {
-	Schema         string `json:"schema"`
-	ProviderID     string `json:"provider_id"`
-	SourceName     string `json:"source_name"`
-	Producer       string `json:"producer"`
-	Start          string `json:"start"`
-	Rule           string `json:"rule"`
-	BatchID        string `json:"producer_batch,omitempty"`
-	BatchRecords   int64  `json:"producer_batch_records"`
-	BatchBytes     int64  `json:"producer_batch_bytes"`
+	Schema       string `json:"schema"`
+	ProviderID   string `json:"provider_id"`
+	SourceName   string `json:"source_name"`
+	Producer     string `json:"producer"`
+	Start        string `json:"start"`
+	Rule         string `json:"rule"`
+	BatchID      string `json:"producer_batch,omitempty"`
+	BatchRecords int64  `json:"producer_batch_records"`
+	BatchBytes   int64  `json:"producer_batch_bytes"`
+	// LaneRecords and LaneBytes are the lane's batch memberships as the
+	// producer counts them: a record two of the lane's batches hold counts
+	// in each, so they can be more than the lane's distinct records.
 	LaneRecords    int64  `json:"producer_lane_records"`
 	LaneBytes      int64  `json:"producer_lane_bytes"`
 	StatementError string `json:"statement_error,omitempty"`
@@ -187,8 +195,12 @@ type LaneServed struct {
 	ServedBytes, ServeBytesPerSecond int64
 }
 
-// followSyncProtocol names the followed stream in a lane's SYNC_PROTOCOL.
-const followSyncProtocol = "flatsql-sync read-chunk follow"
+// followSyncProtocol names the followed stream in a lane's SYNC_PROTOCOL;
+// publicationsSyncProtocol a lane imported from its publications alone.
+const (
+	followSyncProtocol       = "flatsql-sync read-chunk follow"
+	publicationsSyncProtocol = "dataset publications ($PNM)"
+)
 
 // laneFollowStatus fills a lane's $DSS from what the node received from the
 // lane's followed producers and served to the lane's followers.
@@ -204,6 +216,9 @@ func (h *SyncHandler) laneFollowStatus(lane *SyncLane) {
 			}
 			lane.Subscribed = true
 			lane.SyncProtocol = followSyncProtocol
+			if f.PublicationsOnly {
+				lane.SyncProtocol = publicationsSyncProtocol
+			}
 			// A followed lane's total is the producer's stated current
 			// batch, not a publication row (none is written for it).
 			if f.StatedRecords > 0 && uint64(f.StatedRecords) > lane.TotalRows {

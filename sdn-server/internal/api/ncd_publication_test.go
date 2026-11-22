@@ -71,7 +71,7 @@ func TestNCDValidatedDescriptorPublicationReplay(t *testing.T) {
 	defer consumer.Close()
 	options := storage.DatasetPublicationReplayOptions{
 		PNM: publisher.announcement.PNM, ProviderPublicKey: mustLibp2pEd25519(t, publicKey), WorkDir: filepath.Join(dir, "replay"),
-		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+		FetchByCID: func(_ context.Context, cid string, _ int64) ([]byte, error) {
 			body, ok := pinned[cid]
 			if !ok {
 				return nil, fmt.Errorf("unpublished CID %s", cid)
