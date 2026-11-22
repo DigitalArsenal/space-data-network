@@ -166,8 +166,8 @@ func TestCatalogThreeProductRowsPublishAndReadBack(t *testing.T) {
 	trusted := mustLibp2pEd25519(t, public)
 	kubo := newDatasetPublicationKuboTestServer(t, map[string][]byte{})
 	defer kubo.Close()
-	fetch := func(ctx context.Context, id string) ([]byte, error) {
-		return storage.FetchIPFSBlockByCID(ctx, kubo.URL, id)
+	fetch := func(ctx context.Context, id string, maxBytes int64) ([]byte, error) {
+		return storage.FetchIPFSBlockByCIDUpTo(ctx, kubo.URL, id, maxBytes)
 	}
 	var received []string
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

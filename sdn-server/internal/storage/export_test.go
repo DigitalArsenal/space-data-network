@@ -666,7 +666,7 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 	result, err := VerifyDatasetPublicationReplay(context.Background(), store, DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
 		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
-		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+		FetchByCID: func(_ context.Context, cid string, _ int64) ([]byte, error) {
 			data, ok := objects[cid]
 			if !ok {
 				return nil, os.ErrNotExist
@@ -695,7 +695,7 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 	if _, err := VerifyDatasetPublicationReplay(context.Background(), store, DatasetPublicationReplayOptions{
 		PNM:               tamperedPNM,
 		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
-		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+		FetchByCID: func(_ context.Context, cid string, _ int64) ([]byte, error) {
 			return objects[cid], nil
 		},
 		WorkDir: filepath.Join(tmpDir, "tampered"),
@@ -796,7 +796,7 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 	result, err := MaterializeDatasetPublication(context.Background(), subscriberStore, DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
 		ProviderPublicKey: mustLibp2pEd25519(t, providerPublicKey),
-		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+		FetchByCID: func(_ context.Context, cid string, _ int64) ([]byte, error) {
 			fetchAttempts[cid]++
 			if fetchAttempts[cid] == 1 {
 				return nil, fmt.Errorf("transient content routing miss for %s", cid)
@@ -807,7 +807,7 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 			}
 			return append([]byte(nil), data...), nil
 		},
-		FetchByCIDToFile: func(_ context.Context, cid string, path string) error {
+		FetchByCIDToFile: func(_ context.Context, cid string, path string, _ int64) error {
 			fileFetchAttempts[cid]++
 			data, ok := objects[cid]
 			if !ok {

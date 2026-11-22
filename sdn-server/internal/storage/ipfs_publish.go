@@ -149,9 +149,43 @@ func cidV1UnixFSSHA256(data []byte) (string, error) {
 	return root.Cid().String(), nil
 }
 
+// CIDLargerThanLimitError is a fetch by CID stopped because the content is
+// larger than the caller's limit (a publication's stated size). Size is the
+// content's size when Kubo stated it (X-Content-Length), else -1: the fetch
+// then read Limit+1 bytes and stopped.
+type CIDLargerThanLimitError struct {
+	CID   string
+	Limit int64
+	Size  int64
+}
+
+func (e *CIDLargerThanLimitError) Error() string {
+	if e.Size >= 0 {
+		return fmt.Sprintf("CID %s holds %d bytes, more than the %d stated", e.CID, e.Size, e.Limit)
+	}
+	return fmt.Sprintf("CID %s holds more than the %d bytes stated (the fetch read %d and stopped)", e.CID, e.Limit, e.Limit+1)
+}
+
+// ipfsCatContentLength is the content size Kubo's cat states in
+// X-Content-Length, or -1.
+func ipfsCatContentLength(resp *http.Response) int64 {
+	var n int64
+	if _, err := fmt.Sscan(strings.TrimSpace(resp.Header.Get("X-Content-Length")), &n); err != nil || n < 0 {
+		return -1
+	}
+	return n
+}
+
 // FetchIPFSBlockByCID fetches immutable bytes from a Kubo RPC API. The CID may
 // be either a raw block CID or a chunked UnixFS file root CID.
 func FetchIPFSBlockByCID(ctx context.Context, ipfsAPIURL, cidValue string) ([]byte, error) {
+	return FetchIPFSBlockByCIDUpTo(ctx, ipfsAPIURL, cidValue, -1)
+}
+
+// FetchIPFSBlockByCIDUpTo is FetchIPFSBlockByCID reading at most maxBytes
+// (none when negative): content larger than that is a
+// *CIDLargerThanLimitError, and no more than maxBytes+1 bytes are read.
+func FetchIPFSBlockByCIDUpTo(ctx context.Context, ipfsAPIURL, cidValue string, maxBytes int64) ([]byte, error) {
 	if strings.TrimSpace(ipfsAPIURL) == "" {
 		return nil, fmt.Errorf("ipfs api url is required")
 	}
@@ -179,12 +213,23 @@ func FetchIPFSBlockByCID(ctx context.Context, ipfsAPIURL, cidValue string) ([]by
 		return nil, fmt.Errorf("post IPFS cat: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return nil, fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	reader := io.Reader(resp.Body)
+	if maxBytes >= 0 {
+		if size := ipfsCatContentLength(resp); size > maxBytes {
+			return nil, &CIDLargerThanLimitError{CID: cidValue, Limit: maxBytes, Size: size}
+		}
+		reader = io.LimitReader(resp.Body, maxBytes+1)
+	}
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("read IPFS CID bytes: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	if maxBytes >= 0 && int64(len(body)) > maxBytes {
+		return nil, &CIDLargerThanLimitError{CID: cidValue, Limit: maxBytes, Size: -1}
 	}
 	return body, nil
 }
@@ -193,6 +238,14 @@ func FetchIPFSBlockByCID(ctx context.Context, ipfsAPIURL, cidValue string) ([]by
 // local file. The CID may be either a raw block CID or a chunked UnixFS file
 // root CID.
 func FetchIPFSBlockByCIDToFile(ctx context.Context, ipfsAPIURL, cidValue, outputPath string) error {
+	return FetchIPFSBlockByCIDToFileUpTo(ctx, ipfsAPIURL, cidValue, outputPath, -1)
+}
+
+// FetchIPFSBlockByCIDToFileUpTo is FetchIPFSBlockByCIDToFile writing at most
+// maxBytes (none when negative): content larger than that is a
+// *CIDLargerThanLimitError, no more than maxBytes+1 bytes are read, and
+// nothing is left at outputPath.
+func FetchIPFSBlockByCIDToFileUpTo(ctx context.Context, ipfsAPIURL, cidValue, outputPath string, maxBytes int64) error {
 	if strings.TrimSpace(ipfsAPIURL) == "" {
 		return fmt.Errorf("ipfs api url is required")
 	}
@@ -225,8 +278,15 @@ func FetchIPFSBlockByCIDToFile(ctx context.Context, ipfsAPIURL, cidValue, output
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		return fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	reader := io.Reader(resp.Body)
+	if maxBytes >= 0 {
+		if size := ipfsCatContentLength(resp); size > maxBytes {
+			return &CIDLargerThanLimitError{CID: cidValue, Limit: maxBytes, Size: size}
+		}
+		reader = io.LimitReader(resp.Body, maxBytes+1)
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
 		return fmt.Errorf("create IPFS output directory: %w", err)
@@ -242,9 +302,14 @@ func FetchIPFSBlockByCIDToFile(ctx context.Context, ipfsAPIURL, cidValue, output
 			_ = os.Remove(tempPath)
 		}
 	}()
-	if _, err := io.Copy(tempFile, resp.Body); err != nil {
+	written, err := io.Copy(tempFile, reader)
+	if err != nil {
 		_ = tempFile.Close()
 		return fmt.Errorf("write IPFS CID bytes: %w", err)
+	}
+	if maxBytes >= 0 && written > maxBytes {
+		_ = tempFile.Close()
+		return &CIDLargerThanLimitError{CID: cidValue, Limit: maxBytes, Size: -1}
 	}
 	if err := tempFile.Close(); err != nil {
 		return fmt.Errorf("close IPFS output file: %w", err)
