@@ -229,9 +229,21 @@ func TestFollowCostMeasurement(t *testing.T) {
 	// the engine reads logged meanwhile.
 	publishLane := func(label string) {
 		q := url.Values{"schema": {"OMM.fbs"}, "provider_id": {"space-data-network-02"}, "source": {"celestrak-gp"}, "from": {producer.id}, "start": {"current"}}
-		raw, _, _ := followCostRequest(follower, "GET", "/api/v1/sync/plan?"+q.Encode(), "", nil)
 		var plan api.LanePlan
-		_ = json.Unmarshal(raw, &plan)
+		for try := 0; try < 30 && plan.BatchID == ""; try++ {
+			// A statement refused busy (the producer's limit on other
+			// peers' reads) is asked again.
+			if try > 0 {
+				time.Sleep(2 * time.Second)
+			}
+			raw, _, _ := followCostRequest(follower, "GET", "/api/v1/sync/plan?"+q.Encode(), "", nil)
+			plan = api.LanePlan{}
+			_ = json.Unmarshal(raw, &plan)
+		}
+		if plan.BatchID == "" {
+			logf("%s: no statement of the OMM lane (%s); not published", label, plan.StatementError)
+			return
+		}
 		body, _ := json.Marshal(map[string]any{"schema": "OMM.fbs", "providerId": "space-data-network-02", "sourceName": "celestrak-gp",
 			"batchId": plan.BatchID, "chunkSize": 50000, "fullCatalog": true})
 		before := len(readFileString(producer.logPath))
