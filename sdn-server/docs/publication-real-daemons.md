@@ -224,9 +224,10 @@ and a publication of the lane's newest records, then retracts the lane
 scopes go at the retraction, the alert is clear when the retraction
 answers, and the restarted node raises nothing.
 
-`TestPublicationAlertCheckCostRealDaemons` publishes 50 batches that each
-hold a record R, then fails a batch holding R: the node's log names one
-fingerprint for the check, of the failed batch itself, and none of the 50.
+`TestPublicationAlertCheckCostRealDaemons` publishes 50 batches, batch i
+holding a record R_i, then fails a batch holding R_1 to R_50: the node's log
+names one fingerprint for the check, of the failed batch itself, and none of
+the 50.
 
 `TestPublicationAlertHeadPublicationRealDaemons` fails a three-record batch's
 publication, then publishes a head of that batch (`limit: 1`) and a head of
