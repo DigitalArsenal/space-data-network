@@ -304,25 +304,34 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req sy
 		if req.q.FOLLOW() || fetched || req.batchID != "" || req.providerID == "" || req.sourceName == "" || req.cursor != "" {
 			return errors.New("a lane's statement is one unfollowed read-chunk naming the lane and no batch, with PROJECTION STATEMENT alone")
 		}
-		return writeLaneStatement(w, activeStore, query)
+		began := time.Now()
+		err := writeLaneStatement(w, activeStore, query)
+		logFollowerRead("statement", peerID, req, began, err)
+		return err
 	}
 	if listed || fetched {
 		if req.q.FOLLOW() || listed == fetched || req.batchID == "" || req.providerID == "" || req.sourceName == "" {
 			return errors.New("a batch's list or its records by CID is one unfollowed read-chunk naming the lane and the batch, with one of PROJECTION and CID")
 		}
+		began := time.Now()
 		if listed {
 			if projection != syncwire.ProjectionCID {
 				return fmt.Errorf("unsupported PROJECTION %q", truncateName(projection))
 			}
-			return writeBatchCIDPage(w, activeStore, req)
+			err := writeBatchCIDPage(w, activeStore, req)
+			logFollowerRead("batch list page", peerID, req, began, err)
+			return err
 		}
-		return writeBatchRecords(w, activeStore, req, named)
+		err := writeBatchRecords(w, activeStore, req, named)
+		logFollowerRead("records by CID", peerID, req, began, err)
+		return err
 	}
 	if req.q.FOLLOW() {
 		rw, ok := w.(io.ReadWriter)
 		if !ok {
 			return errors.New("a followed read needs a two-way stream")
 		}
+		logFollowerRead("followed stream opened", peerID, req, time.Now(), nil)
 		return h.followReadChunk(rw, activeStore, query, peerID, req)
 	}
 	page, records, err := datasync.ScanPage(activeStore, query, datasync.MaxSyncChunkLimit)
@@ -330,6 +339,22 @@ func (h *FlatSQLSyncHandler) handleReadChunk(w io.Writer, peerID peer.ID, req sy
 		return err
 	}
 	return syncwire.WriteScanPage(w, activeStore, page, records)
+}
+
+// logFollowerRead logs one read a follower asked of a lane (its statement, a
+// page of a batch's list, records by CID, a followed stream), with what it
+// took: these are the reads a follower costs the producer.
+func logFollowerRead(what string, peerID peer.ID, req syncRequest, began time.Time, err error) {
+	lane := fmt.Sprintf("%s %s/%s", req.schema, truncateName(req.providerID), truncateName(req.sourceName))
+	if req.batchID != "" {
+		lane += " batch " + truncateName(req.batchID)
+	}
+	if err != nil {
+		log.Infof("flatsql-sync: %s of %s for %s failed after %s: %s", what, lane, peerID.ShortString(), time.Since(began).Round(time.Millisecond),
+			boundedRefusalReason(err.Error()))
+		return
+	}
+	log.Infof("flatsql-sync: %s of %s for %s in %s", what, lane, peerID.ShortString(), time.Since(began).Round(time.Millisecond))
 }
 
 // followQuiet is how long a followed read waits for new records before it

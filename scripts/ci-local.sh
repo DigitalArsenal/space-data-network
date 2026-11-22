@@ -13,7 +13,7 @@
 #   preflight                      preflight, encryption
 #   go-quick (four package groups) go
 #   go-heavy (eleven test groups)  heavy
-#   publication-e2e (three groups) publication
+#   publication-e2e (six groups)   publication
 #   go-builds                      builds
 #   js                             js
 #   delivery                       delivery
@@ -629,25 +629,31 @@ run_go_extended() {
   return "$failed"
 }
 
-# Publication between real daemons, in three groups by test name. Run
-# 44031044072 ran the whole suite in one binary and reached go test's 50m
-# panic during its tenth test; its nine finished tests took 543s (Retention),
-# 473s (Follow), 356s (the two-daemon delivery test), 297s (Fingerprint),
-# 260s (LaneCount), 225s (FollowStatus), 223s (ImportChunks), 220s
-# (InvalidSignature) and 213s (Key); ContentAddress takes about as long as
-# Key (72.7s against 67.9s on macOS). Each group is about 1,000s of runner
-# time against a 45m budget. Every group checks that the four lists together
-# are exactly the package's ^TestPublication.*RealDaemons$ tests, each listed
+# Publication between real daemons, in six groups by test name, at most 7
+# tests each. Run 44031044072 ran the whole suite in one binary and reached
+# go test's 50m panic during its tenth test; its nine finished tests took
+# 543s (Retention), 473s (Follow), 356s (the two-daemon delivery test), 297s
+# (Fingerprint), 260s (LaneCount), 225s (FollowStatus), 223s (ImportChunks),
+# 220s (InvalidSignature) and 213s (Key). Run 45007978545 (main at
+# 339d9290b) reached the 45m budget in a group of eleven: its ten finished
+# tests took 231 to 301s each. At about 300s a test, 7 tests are about 35
+# minutes of a group's 45m budget. The tests that need the 1.1.9 release
+# binary (Upgrade, Rollback, ConversionRecord) are in publication-6, the one
+# group that fetches it. Every group checks that the six lists together are
+# exactly the package's ^TestPublication.*RealDaemons$ tests, each listed
 # once, and that each test of its own list ran and ended exactly once.
 PUBLICATION_GO_TESTS="^TestPublication.*RealDaemons$"
 PUBLICATION_GO_TEST_TIMEOUT="45m"
+PUBLICATION_GROUPS="publication-1 publication-2 publication-3 publication-4 publication-5 publication-6"
 
 publication_group_tests() {
   case "$1" in
-    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons TestPublicationGossipGateRealDaemons TestPublicationPNMOnlyLaneRealDaemons TestPublicationUnheldBatchImportsPNMRealDaemons TestPublicationStorePanicReleasesReservationRealDaemons TestPublicationInterruptedSupersededRealDaemons TestPublicationInterruptedCrashBoundRealDaemons" ;;
-    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons TestPublicationSubscriptionFileOrderRealDaemons TestPublicationPNMGuardRealDaemons TestPublicationMisstatedSizesRealDaemons TestPublicationRefusedSubscriptionKeptRealDaemons TestPublicationFollowStatementCostRealDaemons" ;;
-    publication-3) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationCursorRefusedRealDaemons TestPublicationStreamSlotsRealDaemons TestPublicationSubscriptionsUnreadableRealDaemons TestPublicationSubscriptionUnknownFieldRealDaemons TestPublicationSubscriptionFilterValueRealDaemons TestPublicationFollowBackoffRealDaemons" ;;
-    publication-4) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons TestPublicationRollbackRealDaemons TestPublicationConversionRecordRealDaemons TestPublicationDiskFloorRealDaemons TestPublicationRestartStreamedPNMRealDaemons TestPublicationDeferredWaitBoundRealDaemons TestPublicationUpdateRestartWaitsRealDaemons TestPublicationInterruptedRedoneRealDaemons" ;;
+    publication-1) echo "TestPublicationRetentionRealDaemons TestPublicationFollowRealDaemons TestPublicationOutlivesClientRealDaemons TestPublicationGossipGateRealDaemons TestPublicationPNMOnlyLaneRealDaemons TestPublicationUpdateRestartWaitsRealDaemons TestPublicationInterruptedRedoneRealDaemons" ;;
+    publication-2) echo "TestPublicationRealDaemons TestPublicationFingerprintRealDaemons TestPublicationContentAddressRealDaemons TestPublicationKeyRealDaemons TestPublicationSlowFlowRealDaemons TestPublicationSubscriptionFileOrderRealDaemons TestPublicationUnheldBatchImportsPNMRealDaemons" ;;
+    publication-3) echo "TestPublicationPNMGuardRealDaemons TestPublicationMisstatedSizesRealDaemons TestPublicationRefusedSubscriptionKeptRealDaemons TestPublicationFollowStatementCostRealDaemons TestPublicationPublicationsOnlyRealDaemons TestPublicationStorePanicReleasesReservationRealDaemons TestPublicationInterruptedSupersededRealDaemons" ;;
+    publication-4) echo "TestPublicationLaneCountRealDaemons TestPublicationFollowStatusRealDaemons TestPublicationImportChunksRealDaemons TestPublicationInvalidSignatureRealDaemons TestPublicationFailureRealDaemons TestPublicationCursorRefusedRealDaemons TestPublicationStreamSlotsRealDaemons" ;;
+    publication-5) echo "TestPublicationSubscriptionsUnreadableRealDaemons TestPublicationSubscriptionUnknownFieldRealDaemons TestPublicationSubscriptionFilterValueRealDaemons TestPublicationFollowBackoffRealDaemons TestPublicationHoldBackoffRealDaemons TestPublicationDiskFloorRealDaemons TestPublicationInterruptedCrashBoundRealDaemons" ;;
+    publication-6) echo "TestPublicationSubscribeRealDaemons TestPublicationUpgradeRealDaemons TestPublicationRollbackRealDaemons TestPublicationConversionRecordRealDaemons TestPublicationRestartStreamedPNMRealDaemons TestPublicationDeferredWaitBoundRealDaemons" ;;
   esac
 }
 
@@ -678,14 +684,17 @@ fetch_v119_binary() {
 
 run_publication() {
   local group="${SDN_CI_PUBLICATION_GROUP:-all}" run g
-  case "$group" in all|publication-1|publication-2|publication-3|publication-4) ;; *) fail "unknown publication group: $group" ;; esac
+  case " all $PUBLICATION_GROUPS " in *" $group "*) ;; *) fail "unknown publication group: $group" ;; esac
   step "Publication between real daemons ($group)"
   local list="$ROOT/.ci-artifacts/publication-tests"
   mkdir -p "$ROOT/.ci-artifacts"
   "$ROOT/scripts/go-with-wasmedge.sh" test -list "$PUBLICATION_GO_TESTS" ./cmd/spacedatanetwork/ > "$list.go" 2>&1 \
     || { cat "$list.go"; fail "listing publication tests"; }
   grep -E "$PUBLICATION_GO_TESTS" "$list.go" | LC_ALL=C sort > "$list.expected" || true
-  for g in publication-1 publication-2 publication-3 publication-4; do
+  for g in $PUBLICATION_GROUPS; do
+    [[ $(publication_group_tests "$g" | wc -w) -le 7 ]] || fail "publication group $g lists more than 7 tests (about 300s each against its 45m budget)"
+  done
+  for g in $PUBLICATION_GROUPS; do
     printf '%s\n' $(publication_group_tests "$g")
   done | LC_ALL=C sort > "$list.grouped"
   [[ -s "$list.expected" ]] || fail "no publication tests listed"
@@ -698,7 +707,7 @@ run_publication() {
   else
     run="^($(publication_group_tests "$group" | tr ' ' '|'))\$"
   fi
-  case "$group" in all|publication-4) fetch_v119_binary ;; esac
+  case "$group" in all|publication-6) fetch_v119_binary ;; esac
   export SDN_E2E_PUBLICATION=1
   export SDN_CI_GO_COVERAGE=1
   go_test_with_timings "publication-${group#publication-}" -v -p=1 -timeout="$budget" -count=1 -run="$run" ./cmd/spacedatanetwork/ \
