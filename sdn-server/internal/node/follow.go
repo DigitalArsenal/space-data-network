@@ -33,7 +33,12 @@ package node
 // with the producer's batch as the kept one (replace-current removes what
 // only the producer's other batches hold; another producer's records of the
 // lane stay). A list read and its fetches run at most once per
-// followSyncEvery per lane.
+// followSyncEvery per lane, and after a failed one under the stream's
+// backoff.
+//
+// A publications-only subscription (FollowPublicationsOnly) runs no stream:
+// the lane is imported from the producer's signed $PNM publications alone,
+// and the producer is asked nothing for it.
 //
 // Subscriptions are kept on disk as size-prefixed $DSS records, one per
 // followed lane: the lane, the producer (PROVIDER_PEER_ID), the cursor to
@@ -53,7 +58,7 @@ package node
 // to followFileName first, so a crash between the two writes cannot leave
 // an unsubscribed lane in followFileName alone. An unsubscribe made under
 // 1.1.9 (during a rollback) removes the lane from followFileName only, so
-// the lane comes back with the next 1.2.0 start. A file that does not read
+// the lane comes back with the next start of 1.1.10 or later. A file that does not read
 // at start is moved aside, never overwritten: no lane runs and no
 // subscription changes until a readable copy is in place (alert
 // subscriptions_unreadable).
@@ -198,7 +203,10 @@ const followStatementWait = 5 * time.Minute
 // followBackoffMin after each connection that delivered no page, up to
 // followBackoffMax, each wait drawn within followBackoffJitter of it, and
 // starts again at followBackoffMin after a connection that delivered a page.
-// A busy refusal is waited at least its retry hint.
+// A busy refusal is waited at least its retry hint, capped at
+// followBackoffMax. A failed hold of the producer's current batch (its list
+// read, its records fetched) is asked again under the same backoff, and at
+// least followSyncEvery after the last ask, while the stream goes on.
 var (
 	followBackoffMin    = time.Second
 	followBackoffMax    = 20 * time.Minute
@@ -251,6 +259,13 @@ const (
 	// publications from it); the lane's retention rule decides which
 	// publications stay.
 	FollowPublicationsKeep = "keep"
+	// FollowPublicationsOnly: the lane is imported from its publications
+	// alone. No followed stream is opened to the producer for it, and no
+	// statement, batch list or page is asked of the producer; each
+	// publication is fetched and imported as under FollowPublicationsKeep.
+	// A large keep-all lane of a producer that publishes it costs the
+	// producer nothing per follower this way.
+	FollowPublicationsOnly = "only"
 )
 
 // FollowPlan is a subscription's first read and whether this node takes it.
@@ -321,6 +336,9 @@ type FollowStatus struct {
 	// publications (FollowPublicationsKeep): each is fetched and imported
 	// although the stream carries its records.
 	KeepPublications bool
+	// PublicationsOnly is set when the lane is imported from its
+	// publications alone (FollowPublicationsOnly): no followed stream runs.
+	PublicationsOnly bool
 	// Refused is why this build does not run the subscription ("" when it
 	// does): its SYNC_FILTER names a field this build does not know (a later
 	// version wrote it). The lane is not followed and its publications are
@@ -345,6 +363,10 @@ func (st FollowStatus) inFollowFile() bool {
 	if st.Refused != "" {
 		return st.inOldFile
 	}
+	if st.PublicationsOnly {
+		// 1.1.9 would follow it as a stream.
+		return false
+	}
 	return st.Start == FollowStartBeginning || (!st.Unread.IsZero() && st.FromBeginning)
 }
 
@@ -363,11 +385,13 @@ type followEntry struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	// current is the producer's statement this node holds as its current
-	// batch, held the records of it this node held then; lastSync is when
-	// the producer's list was last read.
-	current  syncwire.FollowStatement
-	held     int64
-	lastSync time.Time
+	// batch, held the records of it this node held then; holdNext is the
+	// earliest time the producer's list is read again, holdBackoff the
+	// backoff of the next failed hold (0: followBackoffMin).
+	current     syncwire.FollowStatement
+	held        int64
+	holdNext    time.Time
+	holdBackoff time.Duration
 	// stated is the statement of the latest followed page.
 	stated syncwire.FollowStatement
 	// rule is the lane's rule as last applied to the current batch.
@@ -618,14 +642,21 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 
 // Keys of a subscription's SYNC_FILTER (a URL query): where it starts, when a
 // refused cursor left records unread, that it was made from the lane's
-// beginning, and that it keeps the lane's publications. A build before
-// 1.1.11 does not know "publications" and holds such a subscription without
-// running it (FollowStatus.Refused).
+// beginning, that it keeps the lane's publications, and that it opens no
+// stream ("stream=none": the lane is imported from its publications alone).
+// A build before 1.1.11 does not know "publications", and a build before
+// 1.1.13 does not know "stream": each holds such a subscription without
+// running it (FollowStatus.Refused). A publications-only subscription is
+// written with its own key, not as a value of "publications": 1.1.11 and
+// 1.1.12 refuse an unknown value of a known key as a file that does not
+// decode, which would set every subscription aside.
 const (
 	followFilterStart        = "start"
 	followFilterUnread       = "unread"
 	followFilterSubscribed   = "subscribed"
 	followFilterPublications = "publications"
+	followFilterStream       = "stream"
+	followFilterStreamNone   = "none"
 )
 
 // followFilterUnknownError is a SYNC_FILTER naming fields this build does not
@@ -659,7 +690,7 @@ func parseFollowFilter(filter string, st *FollowStatus) error {
 	var unknown []string
 	for k := range q {
 		switch k {
-		case followFilterStart, followFilterUnread, followFilterSubscribed, followFilterPublications:
+		case followFilterStart, followFilterUnread, followFilterSubscribed, followFilterPublications, followFilterStream:
 		default:
 			unknown = append(unknown, k)
 		}
@@ -695,6 +726,11 @@ func parseFollowFilter(filter string, st *FollowStatus) error {
 				return fmt.Errorf("SYNC_FILTER %q: publications %q is not %q", filter, v[0], FollowPublicationsKeep)
 			}
 			st.KeepPublications = true
+		case followFilterStream:
+			if v[0] != followFilterStreamNone {
+				return fmt.Errorf("SYNC_FILTER %q: stream %q is not %q", filter, v[0], followFilterStreamNone)
+			}
+			st.PublicationsOnly = true
 		}
 	}
 	if len(unknown) > 0 {
@@ -713,7 +749,10 @@ func followFilter(st FollowStatus) string {
 		return st.filter
 	}
 	q := url.Values{followFilterStart: {st.Start}}
-	if st.KeepPublications {
+	switch {
+	case st.PublicationsOnly:
+		q.Set(followFilterStream, followFilterStreamNone)
+	case st.KeepPublications:
 		q.Set(followFilterPublications, FollowPublicationsKeep)
 	}
 	if !st.Unread.IsZero() {
@@ -879,7 +918,7 @@ func (m *followManager) Plan(ctx context.Context, key FollowKey, opts FollowOpti
 			// explicit --start beginning reads it from its beginning.
 			plan.Start = FollowStartCurrent
 		}
-		plan.Refusal = fmt.Sprintf("the producer did not state the lane (%v); a producer before 1.2.0 does not, so its first read cannot be bounded or sized", err)
+		plan.Refusal = fmt.Sprintf("the producer did not state the lane (%v); a producer before 1.1.10 does not, so its first read cannot be bounded or sized", err)
 		if followNotAuthorized(err) {
 			plan.Refusal = fmt.Sprintf("the producer did not state the lane (%v): it serves this standard's stream only to peers it grants private reads; with --force the subscription admits the lane's signed publications ($PNM)", err)
 		}
@@ -941,28 +980,19 @@ func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts Follo
 		return FollowPlan{FollowKey: key}, fmt.Errorf("this node holds that subscription and does not run it (%s); sync unsubscribe it first to subscribe again", st.Refused)
 	}
 	switch opts.Publications {
-	case "", FollowPublicationsKeep, FollowPublicationsStream:
+	case "", FollowPublicationsKeep, FollowPublicationsStream, FollowPublicationsOnly:
 	default:
-		return FollowPlan{FollowKey: key}, fmt.Errorf("publications %q is not %q or %q", opts.Publications, FollowPublicationsKeep, FollowPublicationsStream)
+		return FollowPlan{FollowKey: key}, fmt.Errorf("publications %q is not %q, %q or %q", opts.Publications, FollowPublicationsKeep, FollowPublicationsStream,
+			FollowPublicationsOnly)
+	}
+	if opts.Publications == FollowPublicationsOnly && opts.Start != "" {
+		return FollowPlan{FollowKey: key}, fmt.Errorf("a publications-only subscription opens no stream, so it has no start (%q): leave the start out", opts.Start)
 	}
 	if held && opts.Publications != "" && !opts.AcknowledgeUnread && !(!st.Unread.IsZero() && opts.Start == FollowStartBeginning) {
-		// The lane is followed: only what it keeps of its publications
-		// changes; the stream and its cursor are left as they are.
-		keep := opts.Publications == FollowPublicationsKeep
-		m.mu.Lock()
-		changed := e.status.KeepPublications != keep
-		e.status.KeepPublications = keep
-		m.mu.Unlock()
-		if !changed {
-			return FollowPlan{FollowKey: key, Start: st.Start, Rule: opts.Rule}, nil
-		}
-		log.Infof("Followed lane %s %s/%s from %s: publications %s", key.Schema, key.ProviderID, key.SourceName, key.Producer,
-			map[bool]string{true: "kept (each is fetched and imported, so this node serves its files)", false: "not fetched while the stream holds the current batch"}[keep])
-		err := m.save()
-		if keep {
-			m.keepPublicationsStarted()
-		}
-		return FollowPlan{FollowKey: key, Start: st.Start, Rule: opts.Rule}, err
+		return m.changePublications(key, e, opts)
+	}
+	if !held && opts.Publications == FollowPublicationsOnly {
+		return m.subscribePublicationsOnly(key, opts)
 	}
 	if opts.AcknowledgeUnread {
 		if !held {
@@ -1024,6 +1054,95 @@ func (m *followManager) Subscribe(ctx context.Context, key FollowKey, opts Follo
 	m.mu.Unlock()
 	err = m.save()
 	if keep {
+		m.keepPublicationsStarted()
+	}
+	return plan, err
+}
+
+// subscribePublicationsOnly subscribes to a lane imported from its
+// publications alone: no statement is read and no stream opened, so there is
+// no first read to check; each publication is imported under the running
+// guard (the shared reservation, the free disk reserve and the record
+// ceiling), as a kept publication is.
+func (m *followManager) subscribePublicationsOnly(key FollowKey, opts FollowOptions) (FollowPlan, error) {
+	if _, err := m.checkSubscription(key); err != nil {
+		return FollowPlan{FollowKey: key}, err
+	}
+	rule := m.n.laneRetentionRule(key.Schema, key.ProviderID, key.SourceName)
+	if opts.Rule != "" {
+		rule = opts.Rule
+	}
+	st := FollowStatus{FollowKey: key, Since: time.Now().UTC(), Start: FollowStartCurrent, PublicationsOnly: true}
+	m.mu.Lock()
+	if _, held := m.subs[key]; !held {
+		m.startLocked(st)
+	}
+	m.mu.Unlock()
+	log.Infof("Subscribed to %s %s/%s from %s: publications only (no stream; each of the lane's publications is fetched and imported; rule %s)",
+		key.Schema, key.ProviderID, key.SourceName, key.Producer, rule)
+	err := m.save()
+	m.keepPublicationsStarted()
+	return FollowPlan{FollowKey: key, Start: st.Start, Rule: rule}, err
+}
+
+// changePublications changes what a held subscription keeps of its lane's
+// publications (FollowOptions.Publications) and nothing else. Between keep
+// and stream the stream and its cursor stay. To publications only, the
+// stream stops and the cursor is kept in the file. From publications only, a
+// stream starts at the producer's current batch, as a new subscription
+// started there does: the lane's publications carried it meanwhile.
+func (m *followManager) changePublications(key FollowKey, e *followEntry, opts FollowOptions) (FollowPlan, error) {
+	only := opts.Publications == FollowPublicationsOnly
+	keep := opts.Publications == FollowPublicationsKeep
+	m.mu.Lock()
+	st := e.status
+	restart := st.PublicationsOnly != only
+	changed := restart || st.KeepPublications != keep
+	m.mu.Unlock()
+	plan := FollowPlan{FollowKey: key, Start: st.Start, Rule: opts.Rule}
+	if !changed {
+		return plan, nil
+	}
+	if !restart {
+		m.mu.Lock()
+		e.status.KeepPublications = keep
+		m.mu.Unlock()
+		log.Infof("Followed lane %s %s/%s from %s: publications %s", key.Schema, key.ProviderID, key.SourceName, key.Producer,
+			map[bool]string{true: "kept (each is fetched and imported, so this node serves its files)", false: "not fetched while the stream holds the current batch"}[keep])
+		err := m.save()
+		if keep {
+			m.keepPublicationsStarted()
+		}
+		return plan, err
+	}
+	// The lane's run changes: the old one stops, then the lane starts again
+	// with what it has received. The entry stays listed meanwhile, so a
+	// save of the files in between keeps the subscription.
+	e.cancel()
+	<-e.done
+	m.mu.Lock()
+	if cur := m.subs[key]; cur != e {
+		m.mu.Unlock()
+		return plan, errors.New("the subscription was changed or removed meanwhile; this change is not made")
+	}
+	st = e.status
+	st.Connected, st.LastError = false, ""
+	st.PublicationsOnly, st.KeepPublications = only, keep
+	if !only {
+		st.Start, st.Cursor = FollowStartCurrent, ""
+	}
+	m.startLocked(st)
+	m.mu.Unlock()
+	if only {
+		log.Infof("Followed lane %s %s/%s from %s: publications only (the stream stops; each of the lane's publications is fetched and imported)",
+			key.Schema, key.ProviderID, key.SourceName, key.Producer)
+	} else {
+		log.Infof("Subscription %s %s/%s from %s: the stream starts at the producer's current batch; publications %s", key.Schema, key.ProviderID,
+			key.SourceName, key.Producer, map[bool]string{true: "kept", false: "not fetched while the stream holds the current batch"}[keep])
+	}
+	plan.Start = st.Start
+	err := m.save()
+	if only || keep {
 		m.keepPublicationsStarted()
 	}
 	return plan, err
@@ -1135,7 +1254,9 @@ func (n *Node) subscribedFrom(from peer.ID, schema, providerID, sourceName strin
 }
 
 // followKeepsPublications reports whether this node's subscription to the
-// lane from the peer keeps its publications (FollowPublicationsKeep).
+// lane from the peer keeps its publications (FollowPublicationsKeep, or
+// FollowPublicationsOnly: each is imported, at once, with no stream to wait
+// for).
 func (n *Node) followKeepsPublications(from peer.ID, schema, providerID, sourceName string) bool {
 	if n == nil || n.follows == nil {
 		return false
@@ -1144,7 +1265,7 @@ func (n *Node) followKeepsPublications(from peer.ID, schema, providerID, sourceN
 	n.follows.mu.Lock()
 	defer n.follows.mu.Unlock()
 	e, ok := n.follows.subs[key]
-	return ok && e.status.Refused == "" && e.status.KeepPublications
+	return ok && e.status.Refused == "" && (e.status.KeepPublications || e.status.PublicationsOnly)
 }
 
 // followPublication is what the $PNM path does with a publication of the
@@ -1167,7 +1288,7 @@ func (n *Node) followPublication(from peer.ID, schema, providerID, sourceName st
 	defer n.follows.mu.Unlock()
 	e, ok := n.follows.subs[key]
 	switch {
-	case !ok:
+	case !ok, e.status.PublicationsOnly:
 		return followPublicationImport
 	case e.status.Connected && e.batchHeld:
 		return followPublicationStreamed
@@ -1242,7 +1363,9 @@ func (m *followManager) keepRefusedLocked(st FollowStatus) {
 // startLocked starts one lane; the caller holds m.mu.
 func (m *followManager) startLocked(st FollowStatus) {
 	ctx, cancel := context.WithCancel(m.n.ctx)
-	e := &followEntry{status: st, cancel: cancel, done: make(chan struct{}), started: time.Now()}
+	// A publications-only lane has no stream to settle: its publications
+	// import at once.
+	e := &followEntry{status: st, cancel: cancel, done: make(chan struct{}), started: time.Now(), settled: st.PublicationsOnly}
 	m.subs[st.FollowKey] = e
 	m.n.wg.Add(1)
 	go func() {
@@ -1259,6 +1382,13 @@ func (m *followManager) startLocked(st FollowStatus) {
 // every minute and a half for as long as it cannot, and the lane's $PNM
 // publications import meanwhile.
 func (m *followManager) run(ctx context.Context, e *followEntry) {
+	m.mu.Lock()
+	only := e.status.PublicationsOnly
+	m.mu.Unlock()
+	if only {
+		m.runPublicationsOnly(ctx, e)
+		return
+	}
 	if followStartDelay != nil {
 		m.mu.Lock()
 		source := e.status.SourceName
@@ -1278,11 +1408,9 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		if pages > 0 {
 			backoff = followBackoffMin
 		}
-		wait := followBackoffWait(backoff)
-		var remote *syncwire.RemoteError
-		if errors.As(err, &remote) && remote.Code == "busy" {
-			wait = max(wait, time.Duration(remote.RetryAfterMs)*time.Millisecond)
-		}
+		// A busy refusal is waited at least its retry hint, at most
+		// followBackoffMax.
+		wait := max(followBackoffWait(backoff), followRetryHint(err))
 		stopped := errors.Is(err, errFollowStopped)
 		if stopped {
 			wait = followStoppedWait
@@ -1326,6 +1454,36 @@ func (m *followManager) run(ctx context.Context, e *followEntry) {
 		}
 		backoff = min(backoff*2, followBackoffMax)
 	}
+}
+
+// followPeerWait is how often a publications-only lane checks for its
+// producer's addresses before it peers the producer in Kubo.
+const followPeerWait = 10 * time.Second
+
+// runPublicationsOnly is a lane imported from its publications alone: it
+// opens no stream and asks the producer nothing. A node with its DHT off
+// peers the producer in Kubo's peering service once it knows the producer's
+// addresses (peerProducer), as a followed stream does when it opens, so
+// Bitswap asks the producer for the publications' blocks.
+func (m *followManager) runPublicationsOnly(ctx context.Context, e *followEntry) {
+	m.mu.Lock()
+	e.settled = true
+	producer := e.status.Producer
+	m.mu.Unlock()
+	pid, err := peer.Decode(producer)
+	if err != nil || m.n.host == nil {
+		<-ctx.Done()
+		return
+	}
+	for len(m.n.host.Peerstore().Addrs(pid)) == 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(followPeerWait):
+		}
+	}
+	m.peerProducer(pid)
+	<-ctx.Done()
 }
 
 // followGuarded is one followed stream: a panic in it (bytes from the
@@ -1384,7 +1542,7 @@ func (m *followManager) followOnce(ctx context.Context, e *followEntry) (int, er
 		// statement gives the present position to follow from.
 		stmt, err := m.readStatement(ctx, pid, st.FollowKey)
 		if err != nil {
-			return 0, fmt.Errorf("read the producer's statement of the lane, to start at its current batch (a producer before 1.2.0 gives none; this lane starts once it does): %w", err)
+			return 0, fmt.Errorf("read the producer's statement of the lane, to start at its current batch (a producer before 1.1.10 gives none; this lane starts once it does): %w", err)
 		}
 		m.mu.Lock()
 		e.status.Cursor = stmt.ResumeCursor
@@ -1644,13 +1802,50 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 		m.settledLocked(e)
 		m.mu.Unlock()
 		return nil
-	case time.Since(e.lastSync) < followSyncEvery:
+	case time.Now().Before(e.holdNext):
 		m.mu.Unlock()
 		return nil
 	}
-	e.lastSync = time.Now()
+	e.holdNext = time.Now().Add(followSyncEvery)
 	m.mu.Unlock()
+	err = m.holdBatch(ctx, st, e, remote, stmt)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err == nil {
+		e.holdBackoff = 0
+		return nil
+	}
+	if ctx.Err() != nil || errors.Is(err, errFollowStopped) {
+		// A lane the running guard stopped waits followStoppedWait.
+		return err
+	}
+	// A failed hold is asked again under the stream's backoff, not at the
+	// next quiet page past followSyncEvery: a producer whose list costs it a
+	// walk of the lane is not asked for it again every half minute while
+	// the stream stays up.
+	if e.holdBackoff == 0 {
+		e.holdBackoff = followBackoffMin
+	}
+	wait := max(followSyncEvery, followBackoffWait(e.holdBackoff), followRetryHint(err))
+	e.holdNext = time.Now().Add(wait)
+	e.holdBackoff = min(e.holdBackoff*2, followBackoffMax)
+	return fmt.Errorf("%w; the batch is asked for again in %s", err, wait.Round(time.Second))
+}
 
+// followRetryHint is a busy refusal's retry hint, at most followBackoffMax
+// (0 for any other error): the hint is the producer's, a uint32 of
+// milliseconds, up to 49 days.
+func followRetryHint(err error) time.Duration {
+	var remote *syncwire.RemoteError
+	if !errors.As(err, &remote) || remote.Code != "busy" {
+		return 0
+	}
+	return min(time.Duration(remote.RetryAfterMs)*time.Millisecond, followBackoffMax)
+}
+
+// holdBatch reads the producer's list of the batch stmt states, holds its
+// records and makes it current (holdCurrent).
+func (m *followManager) holdBatch(ctx context.Context, st FollowStatus, e *followEntry, remote peer.ID, stmt syncwire.FollowStatement) error {
 	began := time.Now()
 	if stmt.Records > followMaxBatchRecords {
 		return fmt.Errorf("%w: the producer states %d records in batch %s, more than the %d this node holds of a followed batch", errFollowRefused,
@@ -1693,7 +1888,7 @@ func (m *followManager) holdCurrent(ctx context.Context, st FollowStatus, e *fol
 			return fmt.Errorf("keep batch %s as the current set: %w", stmt.BatchID, err)
 		}
 	}
-	counts, err = m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, remote.String())
+	counts, err := m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, remote.String())
 	if err != nil {
 		return err
 	}
