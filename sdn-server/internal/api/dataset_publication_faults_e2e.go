@@ -26,8 +26,9 @@ import (
 // SDN_E2E_PUBLICATION_GATES names. With no folder set, nothing waits. A gate
 // that is not opened within publicationGateBound is passed, logged.
 func init() {
-	publicationRunFault = func(req DatasetPublicationRequest) {
+	publicationRunFault = func(s *ConcreteDatasetPublicationService, req DatasetPublicationRequest) {
 		if strings.HasPrefix(req.SourceName, "crash-") {
+			holdAlertWorkerIdle(s)
 			fmt.Fprintf(os.Stderr, "test build: the publication of %s batch %q ends the process\n", datasetPublicationLaneName(req), req.BatchID)
 			os.Exit(3)
 		}
@@ -42,6 +43,33 @@ func init() {
 		if strings.HasPrefix(req.BatchID, "heldlane-") {
 			publicationGate(ctx, "lane-"+req.BatchID, fmt.Sprintf("the publication of %s batch %q holds its lane", datasetPublicationLaneName(req), req.BatchID))
 		}
+	}
+}
+
+// holdAlertWorkerIdle waits, at most publicationGateBound, until the alert
+// worker runs no check, and returns holding the alert lock, so no check
+// starts before the process exits. A check reads the store in native code,
+// and an exit during that read ends the process with a signal in the native
+// code instead of with the fault's status (the check a failure queues runs
+// as the redo starts).
+func holdAlertWorkerIdle(s *ConcreteDatasetPublicationService) {
+	if s == nil || s.runs == nil {
+		return
+	}
+	st := &s.runs.alert
+	deadline := time.Now().Add(publicationGateBound)
+	for {
+		st.mu.Lock()
+		if !st.running {
+			return
+		}
+		st.mu.Unlock()
+		if time.Now().After(deadline) {
+			log.Warnf("test build: the alert worker still runs after %s; the process exits anyway", publicationGateBound)
+			st.mu.Lock()
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

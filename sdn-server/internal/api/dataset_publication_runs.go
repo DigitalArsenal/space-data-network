@@ -384,7 +384,7 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 			// A publication that returned success is reported as one, also
 			// when its context ended after it completed.
 			if publicationRunFault != nil {
-				publicationRunFault(req)
+				publicationRunFault(s, req)
 			}
 			result, err := publish(workCtx)
 			run.result, run.err = result, err

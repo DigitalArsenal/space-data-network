@@ -107,7 +107,7 @@ const publicationMarkMaxAge = 24 * time.Hour
 // returns false when ctx ended while it waited. publicationLaneHeld runs once
 // a publication holds its lane, after the check of a redo.
 var (
-	publicationRunFault func(req DatasetPublicationRequest)
+	publicationRunFault func(s *ConcreteDatasetPublicationService, req DatasetPublicationRequest)
 	publicationRedoGate func(ctx context.Context, req DatasetPublicationRequest) bool
 	publicationLaneHeld func(ctx context.Context, req DatasetPublicationRequest)
 )
