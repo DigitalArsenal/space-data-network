@@ -1002,6 +1002,25 @@ func declaresRollback(m *update.Manifest) bool {
 // stopServingDaemon asks the daemon to shut down and waits for its pid to
 // exit (update.StopLadder). It returns an error, with nothing swapped, when
 // the daemon answered but would not stop, or did not exit through every rung.
+// maxPublicationStopWait bounds what the daemon's handshake answer
+// (waitBeforeStopSeconds) adds to the graceful-stop grace. The daemon sends
+// its publication wait, 30 minutes; a larger value is a daemon bug, and the
+// helper still escalates the stop of a daemon that never exits.
+const maxPublicationStopWait = time.Hour
+
+// publicationStopWait is what the daemon's waitBeforeStopSeconds adds to the
+// graceful-stop grace: 0 for a missing, zero or negative value, at most
+// maxPublicationStopWait (clamped reports that the value was larger).
+func publicationStopWait(seconds int64) (wait time.Duration, clamped bool) {
+	if seconds <= 0 {
+		return 0, false
+	}
+	if seconds > int64(maxPublicationStopWait/time.Second) {
+		return maxPublicationStopWait, true
+	}
+	return time.Duration(seconds) * time.Second, false
+}
+
 func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version string) (servingDaemon, error) {
 	var daemon servingDaemon
 	if strings.TrimSpace(o.AdminURL) == "" || strings.TrimSpace(o.Token) == "" {
@@ -1032,12 +1051,14 @@ func (o helperApplyOptions) stopServingDaemon(ctx context.Context, version strin
 	// The daemon finishes the dataset publications that run before it begins
 	// its shutdown: its graceful stop is given that much longer.
 	bounds := o.Stop
-	if answer.WaitBeforeStopSeconds > 0 {
-		wait := time.Duration(answer.WaitBeforeStopSeconds) * time.Second
+	if wait, clamped := publicationStopWait(answer.WaitBeforeStopSeconds); wait > 0 {
 		if bounds.Grace <= 0 {
 			bounds.Grace = update.DefaultStopGrace
 		}
 		bounds.Grace += wait
+		if clamped {
+			fmt.Fprintf(o.Err, "daemon_stop_wait_clamped reported_seconds=%d at_most=%s\n", answer.WaitBeforeStopSeconds, wait)
+		}
 		fmt.Fprintf(o.Out, "daemon_stop_wait=dataset-publications running=%d at_most=%s\n", answer.RunningPublications, wait)
 		// The daemon has accepted the stop: the ledger line is reported if it
 		// cannot be written, not obeyed.
