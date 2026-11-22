@@ -76,7 +76,9 @@ rows of X; nothing in it grows with the lane or with the number of its other
 batches, and nothing is kept from one check to the next. At most one check
 per failed batch is waiting at a time. Checks run off the publication's path,
 one at a time, on work the node's stop cancels (within the stop's 10 s bound
-for publications), and hold no lock that ingest or a publication waits on.
+for publications). A check holds the store's read lock only for the read of
+X's series rows, and the alert's lock, which a completed publication's report
+also takes, only for its decision and the write of X's row.
 The alert says `(it is being checked)` until the first check of a batch ends.
 
 A completed publication of the whole of X that read the lane after the
@@ -85,7 +87,11 @@ answered, without a store read. The check that follows compares the
 fingerprint of what that publication exported with X as it is now; when
 records arrived in X while the publication ran, X's scope is recorded again
 and the alert raised again, saying how many of X's records arrived after its
-last completed publication and are in no publication of it. The scope's row
+last completed publication and are in no publication of it. When that check
+fails (a store error, such as the 30 s bound on the read of X's series rows),
+X's scope is recorded again too and the alert raised again, saying X `could
+not be checked`; it stays until a later check of X (at its next event, or at
+start) finds it published. The scope's row
 in the store stays until that check confirms the publication, so a node
 stopped before the check raises the alert again at start, and its first
 check after the node is ready clears it. A publication

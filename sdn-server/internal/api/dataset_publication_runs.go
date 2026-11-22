@@ -352,8 +352,10 @@ func (s *ConcreteDatasetPublicationService) runDatasetPublication(ctx context.Co
 // publication_failed alert when it failed, or hands a completed one to what
 // clears the alert. A publication the node's stop cancelled is logged as
 // that and changes no alert. On a completed publication's path it reads no
-// store: what needs the store runs on the alert worker afterwards
-// (dataset_publication_alert.go).
+// store, but it waits for the alert's persist lock, which failures, checks
+// and retractions hold across their row writes, and it deletes the rows of
+// the non-batch scopes it removes; the checks run on the alert worker
+// afterwards (dataset_publication_alert.go).
 func (s *ConcreteDatasetPublicationService) reportDatasetPublication(req DatasetPublicationRequest, run *publicationRun, result *DatasetPublicationResult, err error, stopped bool) {
 	lane := datasetPublicationLaneName(req)
 	batch := strings.TrimSpace(req.BatchID)

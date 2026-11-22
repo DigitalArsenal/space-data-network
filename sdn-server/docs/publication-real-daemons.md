@@ -127,7 +127,8 @@ whole failed batch (two records) completed. The second run's pull returns
 one of the two records, the third both (in another order, so another batch);
 each run publishes a batch of its own, and the alert stays after both: a
 publication of another batch never clears a failed batch. A publication of
-the failed batch whole clears it.
+the failed batch whole clears it, and the check after it finds the batch
+published: the alert stays clear.
 
 `TestPublicationManualRunOutlivesClientRealDaemons` runs the same flow by
 hand on a node whose GP origin answers after 20 s, so every run lasts longer
@@ -165,7 +166,8 @@ completed. A publication of a batch carrying one of them leaves the alert as
 it was, and retention lists no series made of the failed publication's rows.
 A second batch with the same three records fails at its first announcement.
 A publication of a batch carrying all three completes and both failed
-batches stay; a publication of each of them whole clears the alert.
+batches stay; a publication of each of them whole clears the alert, and the
+check of each after it finds it published: the alert stays clear.
 
 `TestPublicationAlertBatchGainedRecordsRealDaemons` publishes a batch of two
 records, stores a third in it, and fails its republication at the third
@@ -178,7 +180,8 @@ publication's window only. The publications of an unrelated batch and of a
 batch holding the first two records leave the alert as it was. A
 publication of the whole first batch removes it from the alert, which stays
 naming the second batch (the first batch holds its record, but is another
-batch); a publication of the whole second batch clears it.
+batch); a publication of the whole second batch clears it, and the check
+after it finds that batch published: the alert stays clear.
 
 `TestPublicationAlertGainedAfterFailureRealDaemons` stores two records in a
 batch and fails its publication, stores a third record in it and fails its
@@ -203,7 +206,18 @@ saying so, before any publication of the lane.
 alert for 20 s after it was decided
 (`SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD=20s`) by the publication of the whole
 failed batch, and fails another batch's publication meanwhile: after the
-hold the alert is active and names that batch.
+hold the alert is active and names that batch, and after the check of the
+first batch it still names the other batch and not the first.
+
+`TestPublicationAlertVerifyCheckErrorRealDaemons` fails a batch's
+publication, then publishes the whole batch on a node whose check verifying
+that publication fails (`SDN_E2E_PUBLICATION_CHECK_FAULT=1` stands for a
+store error such as the 30 s bound on the read of the batch's series rows;
+it fires once per process). The publication clears the alert when it is
+reported; the failed check raises it again, saying the batch could not be
+checked, and it stays. The restarted node raises it again from its row; the
+check once the node is ready finds the batch published and clears it, and
+the node restarted again raises nothing.
 
 `TestPublicationAlertOtherBatchNoCreditRealDaemons` fails a batch of two
 records and publishes another batch holding both: the alert stays. A

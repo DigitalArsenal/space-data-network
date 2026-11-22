@@ -163,7 +163,8 @@ func TestPublicationAlertSupersededBatchRealDaemons(t *testing.T) {
 // 20 s after it is decided (SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD). While the
 // clearing is held, the publication of batch "w" fails. After the hold the
 // alert is active and names "w": the clear of "x" did not take the failure
-// of "w" with it.
+// of "w" with it. After the check of "x" that follows its publication, the
+// alert still names "w" and not "x".
 func TestPublicationAlertFailureDuringClearRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -216,5 +217,73 @@ func TestPublicationAlertFailureDuringClearRealDaemons(t *testing.T) {
 		t.Logf("the publication of the whole of \"x\" answered: %s", status)
 	case <-time.After(time.Minute):
 		t.Fatal("the publication of the whole of \"x\" was not answered within a minute of the hold")
+	}
+	// The check of "x" after its publication: "x" stays out of the alert,
+	// and "w" stays in it.
+	t.Logf("checked: %s", publicationAwaitLog(t, d, `Dataset publication `+lane+`: batch "x" is published as it is now`, time.Minute))
+	alert = publicationAlert(t, d, lane)
+	t.Logf("alert after the check of \"x\": %s", alert)
+	if !strings.Contains(alert, `batch \"w\"`) {
+		t.Fatalf("the publication_failed alert of %s does not name the failed batch \"w\" after the check of \"x\": %q", lane, alert)
+	}
+	if strings.Contains(alert, `batch \"x\"`) {
+		t.Fatalf("the alert names batch \"x\" again after its check: %s", alert)
+	}
+}
+
+// TestPublicationAlertVerifyCheckErrorRealDaemons fails batch "x" (two
+// records), then publishes the whole of "x" on a node whose check verifying
+// that publication fails (SDN_E2E_PUBLICATION_CHECK_FAULT=1, in place of a
+// store error such as the 30 s bound on the read of the batch's series
+// rows). The publication clears the alert when it is reported; the failed
+// check records the scope of "x" again and raises the alert again, saying
+// "x" could not be checked (it stayed clear here), and it stays so. The
+// restarted node raises it again at start; its check of "x" once the node
+// is ready finds "x" published and clears it, and the node restarted again
+// raises nothing.
+func TestPublicationAlertVerifyCheckErrorRealDaemons(t *testing.T) {
+	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
+		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
+	}
+	d := newPublicationDaemon(t, publicationBinary(t), "verify-check-error", "", "", "keep-all")
+	d.env = append(d.env, "SDN_E2E_PUBLICATION_CHECK_FAULT=1")
+	d.start(t)
+	source := "verify-check-error"
+	lane := "OMM.fbs publication-e2e/" + source
+	d.ingestOMMFrames(t, source, "x", 0, [][]byte{baselineOMM(0), baselineOMM(1)})
+	failBatchPublication(t, d, source, "x", 1)
+	t.Logf("alert after the failure: %s", awaitPublicationAlert(t, d, lane, `batch \"x\" is unpublished: no publication of the whole batch completed; it holds 2 records`, time.Minute))
+
+	if pub := d.publish(t, "OMM.fbs", source, "x"); pub.RecordCount != 2 {
+		t.Fatalf("the publication of the whole of \"x\" answered %d records", pub.RecordCount)
+	}
+	t.Logf("removed when reported: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "x" is published`))
+	t.Logf("injected: %s", publicationAwaitLog(t, d, `SDN_E2E_PUBLICATION_CHECK_FAULT: the check of `+lane+` batch "x"`, time.Minute))
+	unchecked := `batch \"x\" is unpublished (it could not be checked: injected check fault (SDN_E2E_PUBLICATION_CHECK_FAULT))`
+	t.Logf("alert after the failed check: %s", awaitPublicationAlert(t, d, lane, unchecked, time.Minute))
+	t.Logf("recorded again: %s", publicationLogAfter(t, d, `Dataset publication `+lane+`: batch "x" could not be checked against its completed publication`))
+	alert := alertStays(t, d, lane, unchecked, 10*time.Second)
+	if !strings.Contains(alert, `the publication of the whole of batch \"x\" completed, but the check of the batch against what it exported failed`) {
+		t.Fatalf("the alert does not say the check of \"x\" after its publication failed: %s", alert)
+	}
+	if strings.Contains(readFileString(d.logPath), `Dataset publication `+lane+`: batch "x" is published as it is now`) {
+		t.Fatalf("the failed check of \"x\" was taken for a confirmation (%s)", d.logPath)
+	}
+
+	d.stop(t)
+	d.start(t)
+	alert = publicationAlert(t, d, lane)
+	t.Logf("alert at the restarted node's start: %s", alert)
+	if !strings.Contains(alert, `the check of the batch against what it exported failed`) {
+		t.Fatalf("the restarted node did not raise the alert of \"x\" again from its row: %q", alert)
+	}
+	t.Logf("checks at start: %s", publicationAwaitLog(t, d, `Dataset publications: the node is ready; checking `, time.Minute))
+	awaitPublicationAlertCleared(t, d, lane, time.Minute)
+	t.Logf("cleared: %s", publicationLogAfter(t, d, `a completed publication of the whole of failed batch "x" exported the 2 records it holds`))
+
+	d.stop(t)
+	d.start(t)
+	if alert := publicationAlert(t, d, lane); alert != "" {
+		t.Fatalf("the node restarted after the check cleared the alert raised it again: %s", alert)
 	}
 }

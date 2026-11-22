@@ -11,7 +11,9 @@ package api
 // nothing is injected. SDN_E2E_PUBLICATION_ALERT_CLEAR_HOLD holds the
 // clearing of a publication_failed alert (heldAlertClear), and
 // SDN_E2E_PUBLICATION_COMPLETION_HOLD a publication before it records its
-// completion (heldPublicationCompletion).
+// completion (heldPublicationCompletion). SDN_E2E_PUBLICATION_CHECK_FAULT=1
+// fails the first check of a failed batch that verifies a publication of
+// the whole batch (injectedVerifyCheckFault).
 
 import (
 	"context"
@@ -110,6 +112,24 @@ func heldPublicationCompletion(lane, batch string) {
 	}
 	log.Warnf("SDN_E2E_PUBLICATION_COMPLETION_HOLD: the publication of %s batch %q is held %s before it records its completion", lane, batch, completionHold)
 	time.Sleep(completionHold)
+}
+
+// errInjectedCheckFault is the error of an injected check fault.
+var errInjectedCheckFault = errors.New("injected check fault (SDN_E2E_PUBLICATION_CHECK_FAULT)")
+
+var verifyCheckFaultFired atomic.Bool
+
+// injectedVerifyCheckFault answers, when SDN_E2E_PUBLICATION_CHECK_FAULT is
+// "1", the injected error of the first check of the process that verifies a
+// publication of the whole of a failed batch, in place of what the store
+// answered, for the real-daemon test of a verifying check the store fails;
+// nil otherwise.
+func injectedVerifyCheckFault(lane, batch string) error {
+	if strings.TrimSpace(os.Getenv("SDN_E2E_PUBLICATION_CHECK_FAULT")) != "1" || !verifyCheckFaultFired.CompareAndSwap(false, true) {
+		return nil
+	}
+	log.Warnf("SDN_E2E_PUBLICATION_CHECK_FAULT: the check of %s batch %q that verifies a publication of the whole batch fails", lane, batch)
+	return errInjectedCheckFault
 }
 
 // injectedPublicationFault answers the injected fault of step, at the window

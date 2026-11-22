@@ -37,7 +37,9 @@ package api
 // are answered, with no store read; the worker then checks X, and when the
 // set X holds is not the one that publication exported (records arrived
 // while it ran), the scope is recorded again and the alert raised again,
-// saying how many records the publication did not export.
+// saying how many records the publication did not export. When that check
+// fails (a store error), the scope is recorded again too, the alert saying X
+// could not be checked, until a later check of X confirms it.
 //
 // The alert clears when its lane has no failed scope left; the scope's
 // removal and the clear are one step under the lock the raise takes, so a
@@ -49,7 +51,9 @@ package api
 // Checks read the store, so they run off the publication's path: on one
 // worker per service that runs one job at a time, on a context the node's
 // stop cancels (StopPublications waits for it within its bound). A
-// publication that completes takes no lock that I/O holds.
+// publication that completes reads no store on its path, but it takes the
+// persist lock, which a failure, a check and a retraction hold across their
+// row writes, and it deletes the rows of the non-batch scopes it removes.
 
 import (
 	"context"
@@ -652,6 +656,9 @@ func (s *ConcreteDatasetPublicationService) checkFailedBatch(ctx context.Context
 	if ctx.Err() != nil {
 		return
 	}
+	if err == nil && scope == nil {
+		err = injectedVerifyCheckFault(key.lane, key.batch)
+	}
 	if err != nil {
 		log.Warnf("Dataset publication %s: batch %q could not be checked (its failed scope stays in the store, and the next start checks it again): %v", key.lane, key.batch, err)
 	}
@@ -684,17 +691,21 @@ func (s *ConcreteDatasetPublicationService) checkFailedBatch(ctx context.Context
 	la := st.lanes[key.lane]
 	scope = la.scopesOrNil()[scopeKey]
 	if scope == nil {
-		if pending.verify == nil || err != nil || published {
+		if pending.verify == nil || published {
 			st.mu.Unlock()
-			if pending.verify != nil && err == nil {
+			if pending.verify != nil {
 				log.Infof("Dataset publication %s: batch %q is published as it is now (%d records)", key.lane, key.batch, check.Records)
 				s.deleteScopeRows(key.lane, []failedScopeKey{scopeKey})
 			}
 			return
 		}
 		// The publication that removed the scope did not export what the
-		// batch holds now: the scope is recorded again.
+		// batch holds now, or the batch could not be checked against it:
+		// the scope is recorded again, and stays until a check confirms.
 		text := fmt.Sprintf("dataset publication %s: the publication of the whole of batch %q completed, but the batch changed while it ran and is not published as it is now", key.lane, key.batch)
+		if err != nil {
+			text = fmt.Sprintf("dataset publication %s: the publication of the whole of batch %q completed, but the check of the batch against what it exported failed", key.lane, key.batch)
+		}
 		newKey := scopeKeyFor(la, key.batch, opBatch)
 		st.mu.Unlock()
 		failedAt := s.now().UTC()
@@ -703,9 +714,13 @@ func (s *ConcreteDatasetPublicationService) checkFailedBatch(ctx context.Context
 		defer st.mu.Unlock()
 		la = st.putScopeLocked(key.lane, newKey, req, failedAt, 0, false, text)
 		if restored := la.scopes[newKey]; newKey.op == opBatch {
-			restored.checked, restored.check = true, check
+			restored.checked, restored.checkErr, restored.check = true, err, check
 		}
-		log.Warnf("Dataset publication %s: batch %q holds %d records, and its last completed publication of the whole batch exported %d: the failed scope is recorded again and the publication_failed alert raised again", key.lane, key.batch, check.Records, check.PublishedRecords)
+		if err != nil {
+			log.Warnf("Dataset publication %s: batch %q could not be checked against its completed publication of the whole batch: the failed scope is recorded again and the publication_failed alert raised again", key.lane, key.batch)
+		} else {
+			log.Warnf("Dataset publication %s: batch %q holds %d records, and its last completed publication of the whole batch exported %d: the failed scope is recorded again and the publication_failed alert raised again", key.lane, key.batch, check.Records, check.PublishedRecords)
+		}
 		s.alerts.Raise(ops.KindPublicationFailed, key.lane, ops.SeverityError, text+" ("+s.scopesText(key.lane, la)+")")
 		return
 	}

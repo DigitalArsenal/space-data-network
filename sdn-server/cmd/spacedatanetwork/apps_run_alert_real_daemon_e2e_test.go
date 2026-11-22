@@ -286,7 +286,8 @@ func TestPublicationManualRunOutlivesClientRealDaemons(t *testing.T) {
 // batch never clears the failed batch, so the alert stays after both runs
 // (it cleared here after the third, when another batch carrying every
 // record of the failed batch counted). A publication of the failed batch
-// whole, the alert's remedy, clears it.
+// whole, the alert's remedy, clears it, and the check of the batch after it
+// finds it published: the alert stays clear.
 func TestPublicationAlertStaysWhenLaterRunsCarryItRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -376,4 +377,5 @@ func TestPublicationAlertStaysWhenLaterRunsCarryItRealDaemons(t *testing.T) {
 	t.Logf("the publication of the whole failed batch: %s", raw)
 	awaitPublicationAlertCleared(t, d, gpFlowLane, time.Minute)
 	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "`+batch+`" is published`))
+	awaitClearAfterCheck(t, d, gpFlowLane, batch, time.Minute)
 }

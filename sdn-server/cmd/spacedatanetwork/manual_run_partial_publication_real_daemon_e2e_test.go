@@ -43,6 +43,18 @@ func awaitPublicationAlertCleared(t *testing.T, d *publicationDaemon, lane strin
 	t.Fatalf("the publication_failed alert of %s is still active after %s: %s", lane, budget, alert)
 }
 
+// awaitClearAfterCheck waits for the check that verifies a completed
+// publication of the whole of batch (the clear when it is reported reads no
+// store) to find the batch published, and fails when the lane's alert is
+// raised after it.
+func awaitClearAfterCheck(t *testing.T, d *publicationDaemon, lane, batch string, budget time.Duration) {
+	t.Helper()
+	t.Logf("checked: %s", publicationAwaitLog(t, d, `Dataset publication `+lane+`: batch "`+batch+`" is published as it is now`, budget))
+	if alert := publicationAlert(t, d, lane); alert != "" {
+		t.Fatalf("the alert is raised again after the check of %q: %s", batch, alert)
+	}
+}
+
 // TestPublicationAlertPartialFailureRealDaemons fails a batch's publication
 // after it wrote publication rows (SDN_E2E_PUBLICATION_FAULT): at the
 // announcement of its second window (the first window is published and
@@ -60,7 +72,8 @@ func awaitPublicationAlertCleared(t *testing.T, d *publicationDaemon, lane strin
 //   - a publication of a batch carrying all three completes, and both
 //     failed batches stay (another batch's publication counts for nothing;
 //     it cleared the alert here when it did);
-//   - a publication of each failed batch whole clears it.
+//   - a publication of each failed batch whole clears it, and the check of
+//     each after it finds it published: the alert stays clear.
 func TestPublicationAlertPartialFailureRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -154,6 +167,9 @@ func TestPublicationAlertPartialFailureRealDaemons(t *testing.T) {
 			}
 			awaitPublicationAlertCleared(t, d, lane, time.Minute)
 			t.Logf("cleared: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "again" is published`))
+			for _, batch := range []string{"failed", "again"} {
+				awaitClearAfterCheck(t, d, lane, batch, time.Minute)
+			}
 		})
 	}
 }

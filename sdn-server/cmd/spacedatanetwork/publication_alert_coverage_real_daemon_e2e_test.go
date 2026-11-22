@@ -51,7 +51,8 @@ func postStatus(t *testing.T, d *publicationDaemon, method, path string, body []
 //     publication counts for nothing;
 //   - a publication of the whole of "y" as it is now removes "y", and the
 //     alert stays naming "x", whose record "y" holds (another batch);
-//   - a publication of the whole of "x" clears it.
+//   - a publication of the whole of "x" clears it, and the check of "x"
+//     after it finds "x" published: the alert stays clear.
 func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for isolated real daemons")
@@ -132,6 +133,7 @@ func TestPublicationAlertBatchGainedRecordsRealDaemons(t *testing.T) {
 	}
 	awaitPublicationAlertCleared(t, d, lane, time.Minute)
 	t.Logf("cleared: %s", publicationLogAfter(t, d, `failed scope "publish batch" of batch "x" is published`))
+	awaitClearAfterCheck(t, d, lane, "x", time.Minute)
 }
 
 // alertStays checks, for budget, that the lane's publication_failed alert
