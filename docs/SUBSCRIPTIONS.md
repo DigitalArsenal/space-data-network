@@ -284,7 +284,7 @@ a slot within their bound.
 Each of these reads runs under its stream: when the peer resets the stream
 or the connection closes, the producer cancels its engine read, and the
 engine stops it. On a lane of 8 million tag rows, four reads of a batch's
-list (2.8 s each when run to their end) canceled at a quarter of the way
+list (2.8 to 3.0 s each when run alone to its end) canceled at a quarter of the way
 returned 1 ms after the cancel, and a read asked right after was served at
 once (the engine's 4 interactive lanes were free). Each read has a bound (a
 statement 1 minute, its wait for a slot included; a page, a page of a
