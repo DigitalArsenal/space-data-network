@@ -22,8 +22,9 @@ var ErrFollowLaneUnsupported = errors.New("following a lane's batches needs a fo
 // LaneCurrentBatch is the producer's statement of a lane: its current batch,
 // the newest batch it holds (the lane counters' instance first stored
 // latest; the higher sequence, then the name, breaks a tie), and the records
-// of that batch. "" when the lane holds none.
-func (s *FlatSQLStore) LaneCurrentBatch(schemaName, providerID, sourceName string) (string, int64, error) {
+// of that batch. "" when the lane holds none. The engine's read ends when
+// ctx ends.
+func (s *FlatSQLStore) LaneCurrentBatch(ctx context.Context, schemaName, providerID, sourceName string) (string, int64, error) {
 	b, ok := s.rb.(format4Backend)
 	if !ok {
 		return "", 0, ErrFollowLaneUnsupported
@@ -32,7 +33,7 @@ func (s *FlatSQLStore) LaneCurrentBatch(schemaName, providerID, sourceName strin
 	if err != nil {
 		return "", 0, err
 	}
-	lanes, err := b.f4Lanes(typ)
+	lanes, err := b.f4LanesContext(ctx, typ)
 	if err != nil {
 		return "", 0, err
 	}
@@ -73,8 +74,9 @@ func (s *FlatSQLStore) LaneCurrentBatch(schemaName, providerID, sourceName strin
 // instances, not its records. A record tagged to two of the lane's batches
 // is counted in each: the lane's sum is its records exactly when no record
 // is in two of its batches, and more than them otherwise (a HEAD that counts
-// each record once reads every record of the lane).
-func (s *FlatSQLStore) LaneTotals(schemaName, providerID, sourceName, batchID string) (records, bytes int64, err error) {
+// each record once reads every record of the lane). The engine's read ends
+// when ctx ends.
+func (s *FlatSQLStore) LaneTotals(ctx context.Context, schemaName, providerID, sourceName, batchID string) (records, bytes int64, err error) {
 	b, ok := s.rb.(format4Backend)
 	if !ok {
 		return 0, 0, ErrFollowLaneUnsupported
@@ -86,7 +88,7 @@ func (s *FlatSQLStore) LaneTotals(schemaName, providerID, sourceName, batchID st
 	if err != nil {
 		return 0, 0, err
 	}
-	lanes, err := b.f4Lanes(typ)
+	lanes, err := b.f4LanesContext(ctx, typ)
 	if err != nil {
 		return 0, 0, err
 	}

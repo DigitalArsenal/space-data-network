@@ -193,8 +193,9 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 	return ScanPageContext(context.Background(), store, req, maxLimit)
 }
 
-// ScanPageContext is ScanPage for a reader that may leave: the page's
-// record read ends when ctx ends (storage.QueryRawRecordsContext).
+// ScanPageContext is ScanPage for a reader that may leave: on a format 5
+// store the page's engine reads (its count or head and its records) end when
+// ctx ends.
 func ScanPageContext(ctx context.Context, store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Page, []*storage.Record, error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("FlatSQL store is unavailable")
@@ -259,7 +260,7 @@ func ScanPageContext(ctx context.Context, store *storage.FlatSQLStore, req Query
 		// so they cost the records stored since, not the feed. TOTAL_COUNT
 		// is 0 (unknown).
 		if filter.MaxRowID <= 0 {
-			head, err := store.RecordSequenceHead(filter)
+			head, err := store.RecordSequenceHead(ctx, filter)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -272,7 +273,7 @@ func ScanPageContext(ctx context.Context, store *storage.FlatSQLStore, req Query
 		// records served on earlier pages. New arrivals lie past MaxRowID.
 		snapshotFilter := filter
 		snapshotFilter.AfterRowID = 0
-		count, head, err := store.RawRecordSnapshot(snapshotFilter)
+		count, head, err := store.RawRecordSnapshotContext(ctx, snapshotFilter)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -296,7 +297,7 @@ func ScanPageContext(ctx context.Context, store *storage.FlatSQLStore, req Query
 		// a cheap MAX(idx.rowid) — rather than requiring the client to resend
 		// it. The reused snapshot's identity metadata is still honored.
 		if filter.MaxRowID <= 0 {
-			head, err := store.RawRecordHead(filter)
+			head, err := store.RawRecordHeadContext(ctx, filter)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -306,7 +307,7 @@ func ScanPageContext(ctx context.Context, store *storage.FlatSQLStore, req Query
 	} else {
 		var err error
 		var recordHead storage.RawRecordHead
-		totalCount, recordHead, err = store.RawRecordSnapshot(filter)
+		totalCount, recordHead, err = store.RawRecordSnapshotContext(ctx, filter)
 		if err != nil {
 			return nil, nil, err
 		}

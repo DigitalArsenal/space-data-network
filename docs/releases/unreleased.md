@@ -83,30 +83,39 @@ command it runs.
 **Followers' reads can no longer take the producer's own engine lanes.**
 1.1.13 answers a lane's statement from counters and makes the follower back
 off; what a follower's other reads cost the producer was unbounded. The
-store engine serves reads on 4 interactive lanes and 1 bulk lane:
+store engine (FlatSQL 3.12.14) serves reads on 4 interactive lanes, 1 bulk
+lane and 1 sandbox lane on any host, whatever its cores:
 
-- At most 2 reads of other peers run at once, so the node's own reads (its
-  publications' window probes and fingerprint scans, its API) always have
-  2 interactive lanes and the bulk lane, and at most 1 of one peer, so a
-  follower of many lanes cannot hold both while another peer asks. A
-  statement past the limit is refused `busy` at once, and the follower
-  backs off; a followed page, a batch's list or a fetch by content address
-  waits for its turn.
+- A statement, a followed page, a page of a batch's list, a fetch by
+  content address and a `read-chunk` scan each take a slot while they read
+  the store, and one peer holds at most 1. Peers the producer trusts take
+  any free slot and have 1 of their own; all other peers share 2 (1 on a
+  host of 1 core). At most 3 such reads run at once (2 on 1 core), all on
+  interactive lanes, so the node's own reads (its publications' window
+  probes and fingerprint scans, its API) always have an interactive lane
+  and the bulk lane, and throwaway peer IDs never keep a trusted follower
+  waiting. A statement waits up to 20 seconds for a slot, then is refused
+  `busy` and the follower backs off; a followed page, a batch's list, a
+  fetch by content address or a scan waits for a slot within its bound.
 - A follower's batch list runs on an interactive lane, not on the bulk lane
   the node's own publication scans use. On a copy of a production store
   with seven lanes followed by a 1.1.12 build, the node's own scans queued
   up to 29 s behind followers' batch lists on that lane (1.1.13 and 1.1.14
   run the lists there too).
-- A statement, a followed page, a page of a batch's list and a fetch by
-  content address run under their stream: when the follower resets the
-  stream or the connection ends, the producer cancels its store read. A
-  statement has a bound of 1 minute, and the others (and any other
-  `read-chunk` scan) 90 seconds, past which the producer answers `busy`. A
-  1.1.13 or 1.1.14 follower waits 2 minutes for a page, so it gets that
-  `busy` before it gives up.
-- A follower that gives up on a batch's list or a fetch resets the stream
-  (1.1.13 and 1.1.14 close it, which the producer reads as the end of the
-  request, so the read goes on to its bound).
+- These reads run under their stream: when the peer resets the stream or
+  the connection closes (also after the peer closed its side of the stream
+  following its request, as `sdn-js` does), the producer cancels its engine
+  read, and the engine stops it within milliseconds and frees its lane. A
+  statement has a bound of 1 minute and the others 90 seconds, the wait for
+  a slot included, past which the producer answers `busy`. A 1.1.13 or
+  1.1.14 follower waits 2 minutes for a page, so it gets that `busy` before
+  it gives up. On a store of another format than 5 a read runs to its end
+  and is answered `busy` then if it passed its bound.
+- A follower that gives up on a batch's list or a fetch, or whose
+  subscription is removed or stopped meanwhile, resets the stream (1.1.13
+  and 1.1.14 close it when they give up, which the producer reads as the
+  end of the request, so the read goes on to its bound; a subscription
+  removed meanwhile leaves the stream open until their 2-minute wait ends).
 - A followed stream from the lane's beginning reads forward from the start
   without counting the lane first.
 - The follower waits 5 minutes for a page (2 minutes before), longer than

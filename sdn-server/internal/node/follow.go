@@ -148,10 +148,11 @@ const followPageLimit = syncwire.FollowMaxRecords
 
 // followReadWait bounds the wait for one followed page; the producer sends
 // an empty page after a quiet interval, so a longer silence is a dead stream.
-// It is longer than the producer's bound on one page (2 minutes from 1.1.13):
-// a producer that is slow answers busy before this node gives up, and one
-// before 1.1.13, which goes on reading for a stream it is no longer asked
-// for, is given the time to answer rather than asked again.
+// It is longer than the producer's bound on one page (90 s; a producer of
+// 1.1.14 or before has none): a producer that is slow answers busy before
+// this node gives up, and one of 1.1.14 or before, which goes on reading for
+// a stream it is no longer asked for, is given the time to answer rather
+// than asked again.
 const followReadWait = 5 * time.Minute
 
 // followSyncEvery is the shortest interval between two reads of a producer's
@@ -197,10 +198,11 @@ const (
 )
 
 // followStatementWait bounds one read of a producer's statement: longer than
-// the producer's bound on a statement (1 minute from 1.1.13), and long
-// enough for a producer before 1.1.13, whose statement reads every record of
-// the lane twice and goes on after the reader gives up, to answer once
-// instead of being asked again.
+// the producer's bound on a statement (60 s, its wait for a slot included; a
+// producer of 1.1.14 or before has none), and long enough for a producer
+// before 1.1.13, whose statement reads every record of the lane twice and
+// goes on after the reader gives up, to answer once instead of being asked
+// again.
 const followStatementWait = 5 * time.Minute
 
 // The wait before a failed followed stream is opened again: it doubles from
@@ -2026,7 +2028,11 @@ func (m *followManager) producerBatchList(ctx context.Context, remote peer.ID, s
 		if err != nil {
 			return nil, err
 		}
+		// A subscription stopped while the page is read resets the
+		// stream at once: the producer's read of the list stops then.
+		stop := context.AfterFunc(ctx, func() { _ = stream.Reset() })
 		cids, next, err := syncwire.ReadCIDPage(stream)
+		stop()
 		if err != nil {
 			// A reset, not a close: the producer stops its read of the
 			// list (a close reads to it as the end of the request).
@@ -2129,7 +2135,11 @@ func (m *followManager) fetchByCID(ctx context.Context, remote peer.ID, st Follo
 	if err != nil {
 		return nil, err
 	}
+	// A subscription stopped while the page is read resets the stream at
+	// once: the producer's read of the records stops then.
+	stop := context.AfterFunc(ctx, func() { _ = stream.Reset() })
 	runs, _, received, err := syncwire.ReadFollowPage(stream, len(cids))
+	stop()
 	if err != nil {
 		// A reset, not a close: the producer stops its read of the
 		// records (a close reads to it as the end of the request).

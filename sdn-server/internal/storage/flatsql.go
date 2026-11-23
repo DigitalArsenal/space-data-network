@@ -5532,10 +5532,11 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 // RecordSequenceHead is the newest position of the sequence a rowid cursor
 // walks, read without counting: format 1's global sdn_record_index rowid
 // (MAX(rowid) is one b-tree seek), or the record backend's boundary for the
-// filter's remaining range.
-func (s *FlatSQLStore) RecordSequenceHead(filter RawRecordQuery) (int64, error) {
+// filter's remaining range. On a format 5 store the engine's read ends when
+// ctx ends; the other formats' reads do not watch ctx.
+func (s *FlatSQLStore) RecordSequenceHead(ctx context.Context, filter RawRecordQuery) (int64, error) {
 	if b, ok := s.rb.(format4Backend); ok {
-		return b.recordSequenceHead(filter)
+		return b.recordSequenceHead(ctx, filter)
 	}
 	if s.rb != nil {
 		filter.UseRowIDCursor = true
@@ -5568,6 +5569,32 @@ func (s *FlatSQLStore) RawRecordSnapshot(filter RawRecordQuery) (int64, RawRecor
 	}
 	head, err := s.rawRecordHeadLocked(filter)
 	return count, head, err
+}
+
+// RawRecordSnapshotContext is RawRecordSnapshot for a caller that may leave:
+// on a format 5 store the engine's reads (the count included) end when ctx
+// ends. The other formats' counts do not watch ctx.
+func (s *FlatSQLStore) RawRecordSnapshotContext(ctx context.Context, filter RawRecordQuery) (int64, RawRecordHead, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, RawRecordHead{}, err
+	}
+	if b, ok := s.rb.(format4Backend); ok {
+		return b.rawRecordSnapshot(ctx, filter)
+	}
+	return s.RawRecordSnapshot(filter)
+}
+
+// RawRecordHeadContext is RawRecordHead for a caller that may leave, as
+// RawRecordSnapshotContext.
+func (s *FlatSQLStore) RawRecordHeadContext(ctx context.Context, filter RawRecordQuery) (RawRecordHead, error) {
+	if err := ctx.Err(); err != nil {
+		return RawRecordHead{}, err
+	}
+	if b, ok := s.rb.(format4Backend); ok {
+		_, head, err := b.rawRecordSnapshot(ctx, filter)
+		return head, err
+	}
+	return s.RawRecordHead(filter)
 }
 
 func (s *FlatSQLStore) rawRecordHeadLocked(filter RawRecordQuery) (RawRecordHead, error) {
