@@ -298,7 +298,11 @@ the stream after its request (as `sdn-js` and the node's remote-records
 reads do) is still answered, and its read stops when its connection
 closes; a reset after that close is not seen by the producer (the stream's
 read side has ended), so such a read otherwise runs to its end or its
-bound.
+bound. The same holds while such a request waits for a slot: if its peer
+resets the stream meanwhile and keeps the connection, the request still
+takes the slot when one frees and reads for nobody, to its end or its
+bound. Each page of a followed stream also reads the lane's statement from
+the lane's counters, without a slot.
 
 A follower waits up to 5 minutes for a statement and for each page. After a
 stream that delivered no page it waits before opening the stream again: 1
