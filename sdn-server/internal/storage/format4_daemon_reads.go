@@ -333,6 +333,12 @@ func (b format4Backend) GetRecord(schemaName, cid string) (*Record, error) {
 // f4TagRows are a set of CIDs' tag rows (one per tag identity, merged over
 // copies), newest first per CID.
 func (b format4Backend) f4TagRows(schemaName string, cids []string) (map[string][]format4.TagRow, error) {
+	return b.f4TagRowsContext(b.d.ctx, schemaName, cids)
+}
+
+// f4TagRowsContext is f4TagRows under ctx, an engine context of the store
+// (readContext).
+func (b format4Backend) f4TagRowsContext(ctx context.Context, schemaName string, cids []string) (map[string][]format4.TagRow, error) {
 	typ, err := f4Type(schemaName)
 	if err != nil {
 		return nil, err
@@ -345,7 +351,7 @@ func (b format4Backend) f4TagRows(schemaName string, cids []string) (map[string]
 	}
 	out := make(map[string][]format4.TagRow, len(stored))
 	for start := 0; start < len(stored); start += 1024 {
-		rows, err := b.d.api().Tags(b.d.ctx, typ, stored[start:min(start+1024, len(stored))])
+		rows, err := b.d.api().Tags(ctx, typ, stored[start:min(start+1024, len(stored))])
 		if errors.Is(err, format4.ErrNoType) {
 			return out, nil
 		}
@@ -559,13 +565,30 @@ func f4IdentityLess(a, c format4.Tag) bool {
 
 // ---- raw records (datasync v1, /api/v1/data) -------------------------------------------
 
+func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	return b.queryRawRecordsContext(nil, filter, hydrate)
+}
+
+// readContext is the engine context of one read for a caller's ctx (nil:
+// the store's alone): it ends with the store and with ctx, and an engine
+// read whose context ends is canceled in the engine.
+func (b format4Backend) readContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return b.d.ctx, func() {}
+	}
+	read, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(b.d.ctx, cancel)
+	return read, func() { stop(); cancel() }
+}
+
 // recordSequenceHead is a rowid cursor's boundary, RawRecordHead's MaxRowID
 // under UseRowIDCursor without its count: the filter's MaxRowID when it
 // names one, else the type's newest sequence from the maintained type
 // summary (never before AfterRowID). It reads no record; a HEAD of a lane of
 // several batches reads every record of the lane (format 1 answered
-// MAX(rowid) with one b-tree seek).
-func (b format4Backend) recordSequenceHead(filter RawRecordQuery) (int64, error) {
+// MAX(rowid) with one b-tree seek). The engine's read ends when ctx ends
+// (nil: the store's lifetime alone).
+func (b format4Backend) recordSequenceHead(ctx context.Context, filter RawRecordQuery) (int64, error) {
 	if err := b.closed(); err != nil {
 		return 0, err
 	}
@@ -583,14 +606,16 @@ func (b format4Backend) recordSequenceHead(filter RawRecordQuery) (int64, error)
 	if filter.MaxRowID > 0 {
 		return filter.MaxRowID, nil
 	}
-	h, err := b.f4TypeHead(typ)
+	h, err := b.f4TypeHeadContext(ctx, typ)
 	if err != nil {
 		return 0, fmt.Errorf("raw record head failed: %w", err)
 	}
 	return max(h.MaxSeq, filter.AfterRowID, 0), nil
 }
 
-func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+func (b format4Backend) queryRawRecordsContext(ctx context.Context, filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	read, done := b.readContext(ctx)
+	defer done()
 	if err := b.closed(); err != nil {
 		return nil, err
 	}
@@ -626,18 +651,18 @@ func (b format4Backend) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]
 		case filter.UseRowIDCursor:
 			// The datasync cursor: seq order, each record once (A16).
 			q.Order, q.Limit = format4.OrderSeqAsc, int64(filter.Limit)
-			recs, err = b.d.api().Scan(b.d.ctx, q)
+			recs, err = b.d.api().Scan(read, q)
 		case f4Indexed(q):
 			// Off the cursor, with a sync filter or a search: format 1's
 			// w order (COALESCE(epoch, ts) asc, CID asc), its tagged
 			// records then its untagged ones, paged by the engine (C-39 E3).
 			q.Order, q.Limit, q.Offset = format4.OrderWAsc, int64(filter.Limit), int64(filter.Offset)
-			recs, err = b.d.api().Scan(b.d.ctx, q)
+			recs, err = b.d.api().Scan(read, q)
 		default:
 			// Newest first as format 1: the tagged records by delivery time
 			// desc, CID asc, then the untagged ones by ts (C-39 E2).
 			q.Order, q.Limit, q.Offset = format4.OrderNewest, int64(filter.Limit), int64(filter.Offset)
-			recs, err = b.d.api().Scan(b.d.ctx, q)
+			recs, err = b.d.api().Scan(read, q)
 		}
 		if errors.Is(err, format4.ErrNoType) {
 			recs, err = nil, nil
@@ -677,7 +702,12 @@ func f4SourceSummaryHead(q format4.Query) bool {
 // f4TypeHead is a whole type's head: the type counters of SUMMARY 1, the
 // ones HEAD answers a plain query from.
 func (b format4Backend) f4TypeHead(typ string) (format4.Head, error) {
-	types, err := b.f4TypeSummaries()
+	return b.f4TypeHeadContext(nil, typ)
+}
+
+// f4TypeHeadContext is f4TypeHead under a caller's ctx (readContext).
+func (b format4Backend) f4TypeHeadContext(ctx context.Context, typ string) (format4.Head, error) {
+	types, err := b.f4TypeSummariesContext(ctx)
 	if err != nil {
 		return format4.Head{}, err
 	}
@@ -686,7 +716,8 @@ func (b format4Backend) f4TypeHead(typ string) (format4.Head, error) {
 }
 
 // f4Head is a raw filter's HEAD (n, bytes, newest seq, ts and tag time).
-func (b format4Backend) f4Head(filter RawRecordQuery) (format4.Head, format4.Query, bool, error) {
+// The engine's reads end when ctx ends (nil: the store's lifetime alone).
+func (b format4Backend) f4Head(ctx context.Context, filter RawRecordQuery) (format4.Head, format4.Query, bool, error) {
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
 	if filter.SchemaName == "" {
 		return format4.Head{}, format4.Query{}, false, errors.New("schema name is required")
@@ -700,14 +731,14 @@ func (b format4Backend) f4Head(filter RawRecordQuery) (format4.Head, format4.Que
 		return format4.Head{}, q, nothing, err
 	}
 	if !nothing && f4Plain(q) {
-		h, err := b.f4TypeHead(typ)
+		h, err := b.f4TypeHeadContext(ctx, typ)
 		return h, q, false, err
 	}
 	if filter.UseRowIDCursor {
 		if q.SeqThrough <= 0 {
 			// Pin the range before counting it. The maintained type summary
 			// supplies the boundary without reading any partition records.
-			h, err := b.f4TypeHead(typ)
+			h, err := b.f4TypeHeadContext(ctx, typ)
 			if err != nil {
 				return format4.Head{}, q, false, err
 			}
@@ -717,7 +748,9 @@ func (b format4Backend) f4Head(filter RawRecordQuery) (format4.Head, format4.Que
 			return format4.Head{MaxSeq: q.SeqThrough}, q, nothing, nil
 		}
 	}
-	h, err := b.d.api().Head(b.d.ctx, q)
+	read, done := b.readContext(ctx)
+	defer done()
+	h, err := b.d.api().Head(read, q)
 	if errors.Is(err, format4.ErrNoType) {
 		h, err = format4.Head{}, nil
 	}
@@ -756,6 +789,12 @@ type f4SnapKey RawRecordQuery
 // without a cursor. Its boundary comes from maintained counters before HEAD
 // reads the range. Without a search it is kept while the counters stand.
 func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawRecordHead, error) {
+	return b.rawRecordSnapshot(nil, filter)
+}
+
+// rawRecordSnapshot is RawRecordSnapshot whose engine reads end when ctx
+// ends (nil: the store's lifetime alone). A read that ends so is not kept.
+func (b format4Backend) rawRecordSnapshot(ctx context.Context, filter RawRecordQuery) (int64, RawRecordHead, error) {
 	if err := b.closed(); err != nil {
 		return 0, RawRecordHead{}, err
 	}
@@ -765,9 +804,9 @@ func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawReco
 	var snap f4Snapshot
 	var err error
 	if strings.TrimSpace(filter.Search) == "" {
-		snap, err = f4Keep(b.d, f4SnapKey(filter), nil, func() (f4Snapshot, error) { return b.f4Snapshot(filter) })
+		snap, err = f4Keep(b.d, f4SnapKey(filter), nil, func() (f4Snapshot, error) { return b.f4Snapshot(ctx, filter) })
 	} else {
-		snap, err = b.f4Snapshot(filter)
+		snap, err = b.f4Snapshot(ctx, filter)
 	}
 	if err != nil {
 		return 0, RawRecordHead{}, err
@@ -793,11 +832,11 @@ func (b format4Backend) RawRecordSnapshot(filter RawRecordQuery) (int64, RawReco
 }
 
 // f4Snapshot is RawRecordSnapshot's engine part.
-func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
-	if snap, ok, err := b.f4LaneSnapshot(filter); err != nil || ok {
+func (b format4Backend) f4Snapshot(ctx context.Context, filter RawRecordQuery) (f4Snapshot, error) {
+	if snap, ok, err := b.f4LaneSnapshot(ctx, filter); err != nil || ok {
 		return snap, err
 	}
-	h, q, _, err := b.f4Head(filter)
+	h, q, _, err := b.f4Head(ctx, filter)
 	if err != nil {
 		return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
 	}
@@ -811,7 +850,7 @@ func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
 		// its lanes' update times (MAX(updated_at): a DELETE or a CAT
 		// supersede-on-ingest restamps the lanes it leaves, C-39 E5).
 		head.MaxRecordTimestampUnix = 0
-		lanes, err := b.f4Lanes(q.Type)
+		lanes, err := b.f4LanesContext(ctx, q.Type)
 		if err != nil {
 			return f4Snapshot{}, fmt.Errorf("raw record head failed: %w", err)
 		}
@@ -844,7 +883,7 @@ func (b format4Backend) f4Snapshot(filter RawRecordQuery) (f4Snapshot, error) {
 // so the count is exactly the records at or before the boundary. Its
 // snapshot times are the lane's update time, as the source summary's are
 // (the HEAD's record timestamp and tag time need every record read).
-func (b format4Backend) f4LaneSnapshot(filter RawRecordQuery) (f4Snapshot, bool, error) {
+func (b format4Backend) f4LaneSnapshot(ctx context.Context, filter RawRecordQuery) (f4Snapshot, bool, error) {
 	if filter.UseRowIDCursor && (filter.AfterRowID > 0 || filter.MaxRowID > 0) {
 		return f4Snapshot{}, false, nil
 	}
@@ -862,11 +901,11 @@ func (b format4Backend) f4LaneSnapshot(filter RawRecordQuery) (f4Snapshot, bool,
 	}
 	var typeHead format4.Head
 	if filter.UseRowIDCursor {
-		if typeHead, err = b.f4TypeHead(typ); err != nil {
+		if typeHead, err = b.f4TypeHeadContext(ctx, typ); err != nil {
 			return f4Snapshot{}, false, fmt.Errorf("raw record head failed: %w", err)
 		}
 	}
-	lanes, err := b.f4Lanes(typ)
+	lanes, err := b.f4LanesContext(ctx, typ)
 	if err != nil {
 		return f4Snapshot{}, false, fmt.Errorf("raw record head failed: %w", err)
 	}
@@ -1676,8 +1715,16 @@ func (b format4Backend) warmCounters() {
 // f4TypeSummaries are the engine's per-type summaries by type name, shared:
 // callers only read the map.
 func (b format4Backend) f4TypeSummaries() (map[string]format4.TypeSummary, error) {
+	return b.f4TypeSummariesContext(nil)
+}
+
+// f4TypeSummariesContext is f4TypeSummaries whose engine read ends when ctx
+// ends (nil: the store's lifetime alone); a read that ends so is not kept.
+func (b format4Backend) f4TypeSummariesContext(ctx context.Context) (map[string]format4.TypeSummary, error) {
 	return f4Keep(b.d, f4KeyTypes, nil, func() (map[string]format4.TypeSummary, error) {
-		types, err := b.d.api().Types(b.d.ctx)
+		read, done := b.readContext(ctx)
+		defer done()
+		types, err := b.d.api().Types(read)
 		if err != nil {
 			return nil, err
 		}
@@ -2124,7 +2171,15 @@ func (b format4Backend) QueryEpochCoverage(query EpochRecordQuery) ([]EpochCover
 
 // f4Lanes are the live lanes of every type (or one).
 func (b format4Backend) f4Lanes(typ string) ([]format4.Lane, error) {
-	lanes, err := b.d.api().Lanes(b.d.ctx, typ)
+	return b.f4LanesContext(nil, typ)
+}
+
+// f4LanesContext is f4Lanes whose engine read ends when ctx ends (nil: the
+// store's lifetime alone).
+func (b format4Backend) f4LanesContext(ctx context.Context, typ string) ([]format4.Lane, error) {
+	read, done := b.readContext(ctx)
+	defer done()
+	lanes, err := b.d.api().Lanes(read, typ)
 	if errors.Is(err, format4.ErrNoType) {
 		return nil, nil
 	}

@@ -217,8 +217,11 @@ the production catalog lanes (`OMM` and `MPE` `space-data-network-02` /
 `celestrak-gp`: 10 to 12 million records in hundreds of batches). Following
 such a lane as a stream is not cheap for its producer: each time a follower
 holds a new batch, every page of the batch's list (8,192 records) walks the
-whole lane on the producer's one bulk engine lane, which the producer's own
-publication shares. A publication costs the producer nothing per follower:
+whole lane (10 to 16 s a page on a copy of the production store). It runs
+in one of the slots the producer gives other peers' reads, on an
+interactive engine lane, so the producer's own publication keeps its lanes,
+and it stops when the follower leaves (see "What a follower costs its
+producer" below). A publication costs the producer nothing per follower:
 its manifest, shard and index are fetched over IPFS. The lane's records then
 arrive with each publication (every 3 hours on the catalog), not within
 seconds of the producer storing them.
@@ -253,6 +256,60 @@ busy and asked for again. Records fetched from a producer are taken only as
 that producer's own: a run that names another peer as origin or producer is
 refused, so a producer whose stored records name an earlier identity of it
 serves its stream but not its current batch.
+
+What a follower costs its producer: a lane's statement is answered from the
+producer's counters, never by reading the lane's records, so it costs the
+lane's batches and not its records (the lane's figures it states are batch
+memberships, as above). A followed stream from the lane's beginning reads
+forward from the start without counting the lane first.
+
+A statement, a followed page, a page of a batch's list, a fetch by content
+address and a `read-chunk` scan each take one of the producer's slots for
+other peers' reads while they read its store, and one peer holds at most 1
+slot, so a follower of many lanes holds one at most. Peers the producer
+trusts (`peers.trusted_peers`, the trust that gives a follower the trusted
+stream limits above) take any free slot and have 1 more of their own; all
+other peers share 2 (1 on a host of 1 core). Throwaway peer IDs that keep
+those 2 busy so never keep a trusted follower waiting, and at most 3 such
+reads run at once (2 on a host of 1 core). The store engine (FlatSQL
+3.12.14) serves reads on 4 interactive lanes, 1 bulk lane and 1 sandbox
+lane whatever the host's cores (the cores set only its writer threads), and
+all these reads run on interactive lanes: the node's own reads (its
+publications' window probes and fingerprint scans, its API) always have an
+interactive lane and the bulk lane, and ingest is written apart from every
+read. A statement waits up to 20 seconds for a slot (past one 10 to 16 s
+list page of its own follower), then is refused `busy`; the others wait for
+a slot within their bound.
+
+Each of these reads runs under its stream: when the peer resets the stream
+or the connection closes, the producer cancels its engine read, and the
+engine stops it. On a lane of 8 million tag rows, four reads of a batch's
+list (2.8 to 3.0 s each when run alone to its end) canceled at a quarter of the way
+returned 1 ms after the cancel, and a read asked right after was served at
+once (the engine's 4 interactive lanes were free). Each read has a bound (a
+statement 1 minute, its wait for a slot included; a page, a page of a
+batch's list, a fetch by content address or a scan 90 seconds, the wait for
+a slot included), past which the producer answers `busy`. On a store of
+another format than 5 a read does not watch its stream: it runs to its end,
+holding its slot, and is answered `busy` then if it passed its bound. A
+follower that gives up on a read, or whose subscription is removed or
+stopped while it reads, resets its stream. A peer that closes its side of
+the stream after its request (as `sdn-js` and the node's remote-records
+reads do) is still answered, and its read stops when its connection
+closes; a reset after that close is not seen by the producer (the stream's
+read side has ended), so such a read otherwise runs to its end or its
+bound. The same holds while such a request waits for a slot: if its peer
+resets the stream meanwhile and keeps the connection, the request still
+takes the slot when one frees and reads for nobody, to its end or its
+bound. Each page of a followed stream also reads the lane's statement from
+the lane's counters, without a slot.
+
+A follower waits up to 5 minutes for a statement and for each page. After a
+stream that delivered no page it waits before opening the stream again: 1
+second, doubling after each such stream up to 20 minutes, each wait drawn
+within 20% of that, and at least the retry hint of a `busy` refusal. A
+stream that delivers a page starts the wait at 1 second again. Meanwhile the
+lane's `$PNM` publications import, as above.
 
 ## Where subscriptions are kept
 

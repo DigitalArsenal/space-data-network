@@ -4,6 +4,7 @@
 package datasync
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -189,6 +190,13 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 // ScanPage reads one page of the rowid-snapshot scan. req.IncludeData
 // hydrates the record bytes in the same read; otherwise records are refs.
 func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Page, []*storage.Record, error) {
+	return ScanPageContext(context.Background(), store, req, maxLimit)
+}
+
+// ScanPageContext is ScanPage for a reader that may leave: on a format 5
+// store the page's engine reads (its count or head and its records) end when
+// ctx ends.
+func ScanPageContext(ctx context.Context, store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Page, []*storage.Record, error) {
 	if store == nil {
 		return nil, nil, fmt.Errorf("FlatSQL store is unavailable")
 	}
@@ -252,7 +260,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 		// so they cost the records stored since, not the feed. TOTAL_COUNT
 		// is 0 (unknown).
 		if filter.MaxRowID <= 0 {
-			head, err := store.RecordSequenceHead(filter)
+			head, err := store.RecordSequenceHead(ctx, filter)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -265,7 +273,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 		// records served on earlier pages. New arrivals lie past MaxRowID.
 		snapshotFilter := filter
 		snapshotFilter.AfterRowID = 0
-		count, head, err := store.RawRecordSnapshot(snapshotFilter)
+		count, head, err := store.RawRecordSnapshotContext(ctx, snapshotFilter)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -289,7 +297,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 		// a cheap MAX(idx.rowid) — rather than requiring the client to resend
 		// it. The reused snapshot's identity metadata is still honored.
 		if filter.MaxRowID <= 0 {
-			head, err := store.RawRecordHead(filter)
+			head, err := store.RawRecordHeadContext(ctx, filter)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -299,7 +307,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 	} else {
 		var err error
 		var recordHead storage.RawRecordHead
-		totalCount, recordHead, err = store.RawRecordSnapshot(filter)
+		totalCount, recordHead, err = store.RawRecordSnapshotContext(ctx, filter)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -314,13 +322,7 @@ func ScanPage(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*Pag
 		}
 		filter.MaxRowID = snapshot.MaxRowID
 	}
-	var records []*storage.Record
-	var err error
-	if req.IncludeData {
-		records, err = store.QueryRawRecords(filter)
-	} else {
-		records, err = store.QueryRawRecordRefs(filter)
-	}
+	records, err := store.QueryRawRecordsContext(ctx, filter, req.IncludeData)
 	if err != nil {
 		return nil, nil, err
 	}
