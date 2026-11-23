@@ -211,23 +211,36 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 			}
 		}
 	}
-	awaitStopped := func(source, batch string, stopped time.Time) {
+	// awaitStopped waits for the producer to log, past offset in its log
+	// (where it stood when the follower was told to stop), the read of
+	// source's batch stopped by a reset.
+	awaitStopped := func(source, batch string, stopped time.Time, offset int) {
 		t.Helper()
 		// The list's or the fetch's stream names the batch; the lane's
 		// followed stream, which the follower also resets, names none.
 		reset := regexp.MustCompile(`read-chunk OMM(?:\.fbs)? publication-e2e/` + source + ` batch ` + batch + ` from .+?: the peer reset the stream after (\S+);`)
 		deadline := time.Now().Add(30 * time.Second)
 		for {
-			if m := reset.FindStringSubmatch(readFileString(a.logPath)); m != nil {
+			if m := reset.FindStringSubmatch(readFileString(a.logPath)[offset:]); m != nil {
 				after, err := time.ParseDuration(m[1])
 				if err != nil || after > 60*time.Second {
 					t.Fatalf("the producer's read of %s stopped after %s, want well before its 90 s bound", source, m[1])
 				}
 				t.Logf("the producer's read of %s stopped after %s, %s after its follower was told to stop", source, after,
 					time.Since(stopped).Round(time.Millisecond))
+				for _, line := range strings.Split(readFileString(a.logPath)[offset:], "\n") {
+					if strings.Contains(line, source) {
+						t.Logf("producer after the stop: %s", line)
+					}
+				}
 				return
 			}
 			if time.Now().After(deadline) {
+				for _, line := range strings.Split(readFileString(a.logPath), "\n") {
+					if strings.Contains(line, source) {
+						t.Log(line)
+					}
+				}
 				t.Fatalf("the producer did not stop the read of %s within 30 s of its follower's stop", source)
 			}
 			time.Sleep(500 * time.Millisecond)
@@ -246,23 +259,28 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 	c.subscribeCurrent(t, a, "slowlist-a")
 	d.subscribeCurrent(t, a, "slowfetch-a")
 	awaitBegun("the list read of slowlist-a began", "the fetch read of slowfetch-a began")
-	removed := time.Now()
+	removed, offset := time.Now(), len(readFileString(a.logPath))
 	unsubscribe(c, "slowlist-a")
 	unsubscribe(d, "slowfetch-a")
 	t.Logf("the subscriptions of slowlist-a and slowfetch-a removed in %s", time.Since(removed).Round(time.Millisecond))
-	awaitStopped("slowlist-a", "l1", removed)
-	awaitStopped("slowfetch-a", "f1", removed)
+	awaitStopped("slowlist-a", "l1", removed, offset)
+	awaitStopped("slowfetch-a", "f1", removed, offset)
 
 	// A batch list (c, lane slowlist-b) held at the producer; its follower
 	// stops.
 	a.ingestOMM(t, "slowlist-b", "m1", 530_000, 10)
 	c.subscribeCurrent(t, a, "slowlist-b")
 	awaitBegun("the list read of slowlist-b began")
-	stopped := time.Now()
+	for _, line := range strings.Split(readFileString(a.logPath), "\n") {
+		if strings.Contains(line, "slowlist-b") {
+			t.Logf("producer before the stop: %s", line)
+		}
+	}
+	stopped, offset := time.Now(), len(readFileString(a.logPath))
 	c.stop(t)
 	d.stop(t)
 	t.Logf("the followers stopped in %s", time.Since(stopped).Round(time.Millisecond))
-	awaitStopped("slowlist-b", "m1", stopped)
+	awaitStopped("slowlist-b", "m1", stopped, offset)
 	if plan := b.plan(t, a, "work"); plan.StatementError != "" || plan.BatchID != "w1" || plan.BatchRecords != 10 {
 		t.Fatalf("statement after the slow ones: batch %q %d records, error %q", plan.BatchID, plan.BatchRecords, plan.StatementError)
 	}
