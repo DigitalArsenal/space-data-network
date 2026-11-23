@@ -333,6 +333,12 @@ func (b format4Backend) GetRecord(schemaName, cid string) (*Record, error) {
 // f4TagRows are a set of CIDs' tag rows (one per tag identity, merged over
 // copies), newest first per CID.
 func (b format4Backend) f4TagRows(schemaName string, cids []string) (map[string][]format4.TagRow, error) {
+	return b.f4TagRowsContext(b.d.ctx, schemaName, cids)
+}
+
+// f4TagRowsContext is f4TagRows under ctx, an engine context of the store
+// (readContext).
+func (b format4Backend) f4TagRowsContext(ctx context.Context, schemaName string, cids []string) (map[string][]format4.TagRow, error) {
 	typ, err := f4Type(schemaName)
 	if err != nil {
 		return nil, err
@@ -345,7 +351,7 @@ func (b format4Backend) f4TagRows(schemaName string, cids []string) (map[string]
 	}
 	out := make(map[string][]format4.TagRow, len(stored))
 	for start := 0; start < len(stored); start += 1024 {
-		rows, err := b.d.api().Tags(b.d.ctx, typ, stored[start:min(start+1024, len(stored))])
+		rows, err := b.d.api().Tags(ctx, typ, stored[start:min(start+1024, len(stored))])
 		if errors.Is(err, format4.ErrNoType) {
 			return out, nil
 		}

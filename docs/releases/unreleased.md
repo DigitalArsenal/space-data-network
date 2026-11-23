@@ -87,26 +87,32 @@ store engine serves reads on 4 interactive lanes and 1 bulk lane:
 
 - At most 2 reads of other peers run at once, so the node's own reads (its
   publications' window probes and fingerprint scans, its API) always have
-  2 interactive lanes and the bulk lane. A statement past the limit is
-  refused `busy` at once, and the follower backs off; a followed page, a
-  batch's list or a fetch by content address waits for its turn.
+  2 interactive lanes and the bulk lane, and at most 1 of one peer, so a
+  follower of many lanes cannot hold both while another peer asks. A
+  statement past the limit is refused `busy` at once, and the follower
+  backs off; a followed page, a batch's list or a fetch by content address
+  waits for its turn.
 - A follower's batch list runs on an interactive lane, not on the bulk lane
   the node's own publication scans use. On a copy of a production store
   with seven lanes followed by a 1.1.12 build, the node's own scans queued
   up to 29 s behind followers' batch lists on that lane (1.1.13 and 1.1.14
   run the lists there too).
-- A statement and a followed page run under their stream: when the follower
-  resets the stream or the connection ends, the producer's store read stops.
-  A statement has a bound of 1 minute and a followed page (or any other
-  `read-chunk` scan) 2 minutes, past which the producer answers `busy`.
+- A statement, a followed page, a page of a batch's list and a fetch by
+  content address run under their stream: when the follower resets the
+  stream or the connection ends, the producer cancels its store read. A
+  statement has a bound of 1 minute, and the others (and any other
+  `read-chunk` scan) 90 seconds, past which the producer answers `busy`. A
+  1.1.13 or 1.1.14 follower waits 2 minutes for a page, so it gets that
+  `busy` before it gives up.
+- A follower that gives up on a batch's list or a fetch resets the stream
+  (1.1.13 and 1.1.14 close it, which the producer reads as the end of the
+  request, so the read goes on to its bound).
 - A followed stream from the lane's beginning reads forward from the start
   without counting the lane first.
 - The follower waits 5 minutes for a page (2 minutes before), longer than
   the producer's bound, so a slow producer answers `busy` instead of being
   asked again.
 
-A batch's list and a fetch by content address are not cut off when the
-follower leaves: each runs to its end in its slot. A page of a batch's list
-still walks the whole lane on a keep-all lane of millions of records (10 to
-16 s per 8,192 records on that copy), so `--publications only` remains the
-way to subscribe to such a lane.
+A page of a batch's list still walks the whole lane on a keep-all lane of
+millions of records (10 to 16 s per 8,192 records on that copy), so
+`--publications only` remains the way to subscribe to such a lane.

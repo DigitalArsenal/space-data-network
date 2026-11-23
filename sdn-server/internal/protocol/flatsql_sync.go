@@ -214,8 +214,12 @@ func (h *FlatSQLSyncHandler) HandleStream(op string, s network.Stream) {
 		reset := errors.Is(context.Cause(watch.ctx), errStreamReset)
 		stop()
 		if reset {
-			log.Infof("flatsql-sync: %s %s %s/%s from %s: the peer reset the stream after %s; its store read stopped (%v)", op, req.schema,
-				req.providerID, req.sourceName, peerID.ShortString(), time.Since(began).Round(time.Millisecond), requestErr)
+			lane := req.providerID + "/" + req.sourceName
+			if req.batchID != "" {
+				lane += " batch " + req.batchID
+			}
+			log.Infof("flatsql-sync: %s %s %s from %s: the peer reset the stream after %s; its store read stopped (%v)", op, req.schema,
+				lane, peerID.ShortString(), time.Since(began).Round(time.Millisecond), requestErr)
 			return
 		}
 	case syncwire.OpOpenManifest:
@@ -353,12 +357,14 @@ func (h *FlatSQLSyncHandler) handleReadChunk(ctx context.Context, w io.Writer, p
 		var frame []byte
 		var records []*storage.Record
 		var asked int
-		err := h.boundedWork(ctx, peerID, true, followStatementBound, func(context.Context) error {
+		// A list page and a fetch are pages: under the stream's context
+		// and the page bound.
+		err := h.boundedWork(ctx, peerID, true, followPageBound, func(read context.Context) error {
 			var err error
 			if listed {
-				frame, err = batchCIDPage(activeStore, req)
+				frame, err = batchCIDPage(read, activeStore, req)
 			} else {
-				records, asked, err = batchRecords(activeStore, req, named)
+				records, asked, err = batchRecords(read, activeStore, req, named)
 			}
 			return err
 		})
@@ -444,7 +450,7 @@ var errFollowLifetime = fmt.Errorf("%w: an anonymous followed stream's lifetime 
 
 // batchCIDPage is one page of a batch's list of CIDs. CURSOR and
 // NEXT_CURSOR are the sequence after which the page reads.
-func batchCIDPage(store *storage.FlatSQLStore, req syncRequest) ([]byte, error) {
+func batchCIDPage(ctx context.Context, store *storage.FlatSQLStore, req syncRequest) ([]byte, error) {
 	var after int64
 	if req.cursor != "" {
 		var err error
@@ -452,7 +458,7 @@ func batchCIDPage(store *storage.FlatSQLStore, req syncRequest) ([]byte, error) 
 			return nil, fmt.Errorf("a batch list CURSOR %q is not a node-issued position", truncateName(req.cursor))
 		}
 	}
-	cids, last, more, err := store.LaneBatchCIDPage(req.schema, req.providerID, req.sourceName, req.batchID, after, syncwire.FollowCIDPageLimit)
+	cids, last, more, err := store.LaneBatchCIDPage(ctx, req.schema, req.providerID, req.sourceName, req.batchID, after, syncwire.FollowCIDPageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +515,7 @@ func laneStatementPage(store *storage.FlatSQLStore, query datasync.QueryRequest)
 // batchRecords is the records of a batch named by CID for one followed page
 // (no statement), and the CIDs named; records past the page's limits, and
 // CIDs the batch does not hold, are left out.
-func batchRecords(store *storage.FlatSQLStore, req syncRequest, named string) ([]*storage.Record, int, error) {
+func batchRecords(ctx context.Context, store *storage.FlatSQLStore, req syncRequest, named string) ([]*storage.Record, int, error) {
 	var cids []string
 	for _, c := range strings.Split(named, ",") {
 		if c = strings.TrimSpace(c); c != "" {
@@ -519,7 +525,7 @@ func batchRecords(store *storage.FlatSQLStore, req syncRequest, named string) ([
 	if len(cids) == 0 || len(cids) > syncwire.FollowFetchMaxCIDs {
 		return nil, 0, fmt.Errorf("a fetch by CID names 1 to %d CIDs, not %d", syncwire.FollowFetchMaxCIDs, len(cids))
 	}
-	records, err := store.LaneRecordsByCID(req.schema, req.providerID, req.sourceName, req.batchID, cids)
+	records, err := store.LaneRecordsByCID(ctx, req.schema, req.providerID, req.sourceName, req.batchID, cids)
 	if err != nil {
 		return nil, 0, err
 	}

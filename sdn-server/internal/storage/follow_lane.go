@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -102,10 +103,17 @@ func (s *FlatSQLStore) LaneTotals(schemaName, providerID, sourceName, batchID st
 	return records, bytes, nil
 }
 
+// followReadFault is nil in every release build. A build with the tag
+// sdn_e2e_follow_faults sets it (follow_faults_e2e.go): a test lane's batch
+// list or fetch by CID is a slow store read, for the publication real-daemon
+// tests. read is "list" or "fetch"; it runs under the read's context.
+var followReadFault func(ctx context.Context, read, sourceName string) error
+
 // LaneBatchCIDPage is one page of a batch's list: the CIDs of the lane's
 // records tagged to batchID, in sequence order after afterSeq, at most limit.
-// It returns the last sequence read and whether more may follow.
-func (s *FlatSQLStore) LaneBatchCIDPage(schemaName, providerID, sourceName, batchID string, afterSeq int64, limit int) ([]string, int64, bool, error) {
+// It returns the last sequence read and whether more may follow. The
+// engine's read ends when ctx ends (a follower that left).
+func (s *FlatSQLStore) LaneBatchCIDPage(ctx context.Context, schemaName, providerID, sourceName, batchID string, afterSeq int64, limit int) ([]string, int64, bool, error) {
 	b, ok := s.rb.(format4Backend)
 	if !ok {
 		return nil, 0, false, ErrFollowLaneUnsupported
@@ -120,12 +128,19 @@ func (s *FlatSQLStore) LaneBatchCIDPage(schemaName, providerID, sourceName, batc
 	if strings.TrimSpace(batchID) == "" {
 		return nil, 0, false, errors.New("a batch's list names the batch")
 	}
+	read, done := b.readContext(ctx)
+	defer done()
+	if followReadFault != nil {
+		if err := followReadFault(read, "list", sourceName); err != nil {
+			return nil, 0, false, err
+		}
+	}
 	// A list is a follower's read: the interactive class, under the
 	// producer's limit on followers' reads (protocol), so the one bulk
 	// lane stays the node's own (its publications' fingerprint scans).
 	q := format4.Query{Type: typ, Lane: f4Lane(providerID, sourceName, batchID, "", ""), Order: format4.OrderSeqAsc,
 		SeqAfter: afterSeq, Limit: int64(limit)}
-	recs, err := b.d.api().Scan(b.d.ctx, q)
+	recs, err := b.d.api().Scan(read, q)
 	if errors.Is(err, format4.ErrNoType) {
 		return nil, afterSeq, false, nil
 	}
@@ -142,8 +157,9 @@ func (s *FlatSQLStore) LaneBatchCIDPage(schemaName, providerID, sourceName, batc
 }
 
 // LaneRecordsByCID is the records of cids the lane holds tagged to batchID,
-// each carrying that tag; a CID it does not hold so is left out.
-func (s *FlatSQLStore) LaneRecordsByCID(schemaName, providerID, sourceName, batchID string, cids []string) ([]*Record, error) {
+// each carrying that tag; a CID it does not hold so is left out. The
+// engine's reads end when ctx ends (a follower that left).
+func (s *FlatSQLStore) LaneRecordsByCID(ctx context.Context, schemaName, providerID, sourceName, batchID string, cids []string) ([]*Record, error) {
 	b, ok := s.rb.(format4Backend)
 	if !ok {
 		return nil, ErrFollowLaneUnsupported
@@ -156,7 +172,14 @@ func (s *FlatSQLStore) LaneRecordsByCID(schemaName, providerID, sourceName, batc
 		return nil, err
 	}
 	providerID, sourceName, batchID = strings.TrimSpace(providerID), strings.TrimSpace(sourceName), strings.TrimSpace(batchID)
-	tags, err := b.f4TagRows(schemaName, cids)
+	read, done := b.readContext(ctx)
+	defer done()
+	if followReadFault != nil {
+		if err := followReadFault(read, "fetch", sourceName); err != nil {
+			return nil, err
+		}
+	}
+	tags, err := b.f4TagRowsContext(read, schemaName, cids)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +197,7 @@ func (s *FlatSQLStore) LaneRecordsByCID(schemaName, providerID, sourceName, batc
 	if len(held) == 0 {
 		return nil, nil
 	}
-	recs, err := b.d.api().Get(b.d.ctx, typ, held, false, true)
+	recs, err := b.d.api().Get(read, typ, held, false, true)
 	if errors.Is(err, format4.ErrNoType) {
 		return nil, nil
 	}

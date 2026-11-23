@@ -71,13 +71,21 @@ func TestPublicationFollowStatementCostRealDaemons(t *testing.T) {
 
 // TestPublicationFollowWorkRealDaemons: what a follower asks a producer to
 // read stops when the follower leaves, is bounded, and is limited per peer.
-// The producer is built so a lane named "slow-..." has a statement that
-// reads for 10 minutes (sdn_e2e_follow_faults): a follower that gives up
-// after 5 s resets the stream and the producer's read stops then, not
-// after its 10 minutes; of six such statements asked at once by one peer,
-// four past the two a peer may have running are refused busy at once and
-// the other two are answered busy at the producer's 1-minute bound (the
-// follower waits 5 minutes); after them a lane's statement is answered.
+// The producer is built (sdn_e2e_follow_faults) so a lane named "slow-..."
+// has a statement, a lane named "slowlist-..." a batch list and a lane
+// named "slowfetch-..." a fetch by CID that reads for 10 minutes:
+//   - a follower that gives up on a statement after 5 s resets the stream
+//     and the producer's read stops then, not after its 10 minutes;
+//   - of six such statements asked at once by one peer, the five past the
+//     one slot a peer may hold are refused busy at once and the other is
+//     answered busy at the producer's 1-minute bound (the follower waits 5
+//     minutes); meanwhile another peer's statement is answered, since one
+//     peer holds at most 1 of the 2 slots;
+//   - a batch list and a fetch by CID, each held at the producer by its
+//     follower, stop at the producer when their followers stop, well before
+//     the producer's 90-second bound on a page;
+//
+// after them a lane's statement is answered.
 func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 	if os.Getenv("SDN_E2E_PUBLICATION") != "1" {
 		t.Skip("set SDN_E2E_PUBLICATION=1 for real daemons")
@@ -87,7 +95,13 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 	a.start(t)
 	b := newPublicationDaemon(t, exe, "work-receiver", a.address, a.id, "keep-all")
 	b.start(t)
+	c := newPublicationDaemon(t, exe, "work-lister", a.address, a.id, "keep-all")
+	c.start(t)
+	d := newPublicationDaemon(t, exe, "work-fetcher", a.address, a.id, "keep-all")
+	d.start(t)
 	a.ingestOMM(t, "work", "w1", 500_000, 10)
+	a.ingestOMM(t, "slowlist-a", "l1", 510_000, 10)
+	a.ingestOMM(t, "slowfetch-a", "f1", 520_000, 10)
 
 	planQuery := func(source string) string {
 		return api.SyncPlanPath + "?" + url.Values{"schema": {"OMM"}, "provider_id": {"publication-e2e"}, "source": {source}, "from": {a.id}}.Encode()
@@ -127,6 +141,7 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 	}
 	answers := make([]answer, 6)
 	var wg sync.WaitGroup
+	answered := make(chan struct{}, len(answers))
 	began := time.Now()
 	for i := range answers {
 		wg.Add(1)
@@ -137,7 +152,31 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 			if err != nil || status != http.StatusOK || json.Unmarshal(raw, &answers[i].plan) != nil {
 				t.Errorf("plan slow-busy-%d: HTTP %d %v %.300q", i, status, err, raw)
 			}
+			answered <- struct{}{}
 		}(i)
+	}
+	defer wg.Wait()
+	// Once the refusals are back, one of b's statements holds its slot at
+	// the producer until the bound: another peer's statement is answered
+	// meanwhile (with 2 slots for one peer, b would hold both and c would
+	// be refused busy).
+	wait := time.After(30 * time.Second)
+	for n := 0; n < len(answers)-1; n++ {
+		select {
+		case <-answered:
+		case <-wait:
+			t.Fatalf("%d of six statements answered within 30 s; want five refused at once", n)
+		}
+	}
+	asked := time.Now()
+	plan := c.plan(t, a, "work")
+	t.Logf("another peer's statement while b holds a slot: answered in %s, error %q", time.Since(asked).Round(time.Millisecond), plan.StatementError)
+	if plan.StatementError != "" || plan.BatchID != "w1" || plan.BatchRecords != 10 {
+		t.Fatalf("another peer's statement while b holds a slot: batch %q %d records, error %q; want w1, 10, answered", plan.BatchID, plan.BatchRecords,
+			plan.StatementError)
+	}
+	if held := time.Since(began); held > 50*time.Second {
+		t.Fatalf("another peer's statement was answered %s after b's six, past the start of the bound; the test did not see b's slot held", held)
 	}
 	wg.Wait()
 	refused, bounded := 0, 0
@@ -154,8 +193,47 @@ func TestPublicationFollowWorkRealDaemons(t *testing.T) {
 			t.Errorf("slow-busy-%d answered in %s: %q", i, ans.took, ans.plan.StatementError)
 		}
 	}
-	if refused != 4 || bounded != 2 {
-		t.Fatalf("of six statements at once %d were refused at once and %d answered at the bound; want 4 and 2", refused, bounded)
+	if refused != 5 || bounded != 1 {
+		t.Fatalf("of six statements at once %d were refused at once and %d answered at the bound; want 5 and 1", refused, bounded)
+	}
+
+	// A batch list (c, lane slowlist-a) and a fetch by CID (d, lane
+	// slowfetch-a) each held at the producer; their followers stop.
+	c.subscribeCurrent(t, a, "slowlist-a")
+	d.subscribeCurrent(t, a, "slowfetch-a")
+	for _, read := range []string{"the list read of slowlist-a began", "the fetch read of slowfetch-a began"} {
+		deadline := time.Now().Add(3 * time.Minute)
+		for !strings.Contains(readFileString(a.logPath), read) {
+			if time.Now().After(deadline) {
+				t.Fatalf("the producer did not log %q within 3 minutes of the subscriptions", read)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	stopped := time.Now()
+	c.stop(t)
+	d.stop(t)
+	t.Logf("the follower of slowlist-a and the follower of slowfetch-a stopped in %s", time.Since(stopped).Round(time.Millisecond))
+	for source, batch := range map[string]string{"slowlist-a": "l1", "slowfetch-a": "f1"} {
+		// The list's or the fetch's stream names the batch; the lane's
+		// followed stream, which the follower also resets, names none.
+		reset := regexp.MustCompile(`read-chunk OMM(?:\.fbs)? publication-e2e/` + source + ` batch ` + batch + ` from .+?: the peer reset the stream after (\S+);`)
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			if m := reset.FindStringSubmatch(readFileString(a.logPath)); m != nil {
+				after, err := time.ParseDuration(m[1])
+				if err != nil || after > 60*time.Second {
+					t.Fatalf("the producer's read of %s stopped after %s, want well before its 90 s bound", source, m[1])
+				}
+				t.Logf("the producer's read of %s stopped after %s, %s after its follower was told to stop", source, after,
+					time.Since(stopped).Round(time.Millisecond))
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the producer did not stop the read of %s within 30 s of its follower's stop", source)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 	if plan := b.plan(t, a, "work"); plan.StatementError != "" || plan.BatchID != "w1" || plan.BatchRecords != 10 {
 		t.Fatalf("statement after the slow ones: batch %q %d records, error %q", plan.BatchID, plan.BatchRecords, plan.StatementError)

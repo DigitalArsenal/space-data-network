@@ -2027,10 +2027,13 @@ func (m *followManager) producerBatchList(ctx context.Context, remote peer.ID, s
 			return nil, err
 		}
 		cids, next, err := syncwire.ReadCIDPage(stream)
-		_ = stream.Close()
 		if err != nil {
+			// A reset, not a close: the producer stops its read of the
+			// list (a close reads to it as the end of the request).
+			_ = stream.Reset()
 			return nil, err
 		}
+		_ = stream.Close()
 		list = append(list, cids...)
 		if int64(len(list)) > bound {
 			return nil, fmt.Errorf("%w: the producer lists more than %d records in batch %s, which it states holds %d", errFollowRefused,
@@ -2126,11 +2129,14 @@ func (m *followManager) fetchByCID(ctx context.Context, remote peer.ID, st Follo
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
 	runs, _, received, err := syncwire.ReadFollowPage(stream, len(cids))
 	if err != nil {
+		// A reset, not a close: the producer stops its read of the
+		// records (a close reads to it as the end of the request).
+		_ = stream.Reset()
 		return nil, err
 	}
+	defer stream.Close()
 	want := make(map[string]bool, len(cids))
 	for _, c := range cids {
 		want[c] = true

@@ -14,21 +14,24 @@ import (
 )
 
 // The work a follower's requests cost this node. A lane's statement, a
-// followed page and a batch's list read the store; each runs under the
-// context of its stream (streamWatch), so the engine's read ends when the
-// peer resets the stream or the connection goes, and under a bound shorter
-// than the follower's wait, so a follower is answered (busy) rather than
-// left to give up and ask again. At most followWorkPerPeer of one peer's and
-// followWorkTotal of all peers' such reads run at once; a statement past
-// them is refused busy at once (a follower backs off), and a page, a list or
-// a scan waits for a slot within its bound. The store engine serves reads on
-// 4 interactive lanes and 1 bulk lane: with at most 2 of the interactive
-// lanes and none of the bulk lane taken by remote peers, a node's own reads
-// (its publications' window probes and fingerprint scans, its API) always
-// have lanes of their own. Writes (ingest) run on the engine's writer
-// threads, apart from every read.
+// followed page, a batch's list and a fetch by CID read the store; each runs
+// under the context of its stream (streamWatch), so the engine's read ends
+// when the peer resets the stream or the connection goes, and under a bound
+// shorter than the follower's wait, so a follower is answered (busy) rather
+// than left to give up and ask again. At most followWorkPerPeer of one
+// peer's and followWorkTotal of all peers' such reads run at once; a
+// statement past them is refused busy at once (a follower backs off), and a
+// page, a list, a fetch or a scan waits for a slot within its bound. One
+// peer holds at most 1 of the 2 slots, so a follower of many lanes cannot
+// take every slot while another peer asks: the other slot is free for it or
+// held by a third peer. The store engine serves reads on 4 interactive
+// lanes and 1 bulk lane: with at most 2 of the interactive lanes and none
+// of the bulk lane taken by remote peers, a node's own reads (its
+// publications' window probes and fingerprint scans, its API) always have
+// lanes of their own. Writes (ingest) run on the engine's writer threads,
+// apart from every read.
 const (
-	followWorkPerPeer = 2
+	followWorkPerPeer = 1
 	followWorkTotal   = 2
 )
 
@@ -36,10 +39,13 @@ var (
 	// followStatementBound bounds the work of one lane statement; the
 	// follower waits followStatementWait (internal/node, 5 minutes) for it.
 	followStatementBound = time.Minute
-	// followPageBound bounds the work of one followed page, the wait for
-	// new records after a quiet interval included; the follower waits
-	// followReadWait (internal/node, 5 minutes) for a page.
-	followPageBound = 2 * time.Minute
+	// followPageBound bounds the work of one followed page (the wait for
+	// new records after a quiet interval included), one page of a batch's
+	// list and one fetch by CID. The follower waits followReadWait
+	// (internal/node, 5 minutes) for each; a follower of 1.1.13 or 1.1.14
+	// waits 2 minutes, so the bound is well inside that and the producer's
+	// busy reaches it before it gives up.
+	followPageBound = 90 * time.Second
 )
 
 // followWorkFault is nil in every release build. A build with the tag
@@ -163,7 +169,10 @@ type readDeadliner interface {
 
 // watchStream starts reading s for its handler. The returned watch's context
 // ends with parent, or with errStreamReset once the peer resets s or the
-// connection ends. stop ends the watch's context (the handler is done).
+// connection ends. stop ends the watch's context (the handler is done) and
+// sets the stream's read deadline in the past, so the watch's read of s
+// returns and its goroutine ends then; the handler's caller closing s (a
+// close ends the stream's read side) ends it too.
 func watchStream(parent context.Context, s readDeadliner) (*streamWatch, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	w := &streamWatch{ctx: ctx, cancel: cancel, ready: make(chan struct{})}
@@ -187,16 +196,24 @@ func watchStream(parent context.Context, s readDeadliner) (*streamWatch, func())
 			w.ready = make(chan struct{})
 			w.mu.Unlock()
 			if err != nil {
-				if !errors.Is(err, io.EOF) {
-					// A reset, a closed connection or a peer past its
-					// buffer: nobody reads what this handler would send.
+				// io.EOF alone is the peer closing its side after its
+				// request; it still reads the answer. A closed
+				// connection wraps io.EOF in a reset (yamux: "stream
+				// reset: connection closed: EOF"), so the test is for
+				// io.EOF itself, not errors.Is. A reset, a closed
+				// connection or a peer past its buffer: nobody reads
+				// what this handler would send.
+				if err != io.EOF {
 					cancel(errStreamReset)
 				}
 				return
 			}
 		}
 	}()
-	return w, func() { cancel(context.Canceled) }
+	return w, func() {
+		cancel(context.Canceled)
+		_ = s.SetReadDeadline(time.Unix(1, 0))
+	}
 }
 
 // SetReadDeadline sets when the handler's next Read gives up waiting.
