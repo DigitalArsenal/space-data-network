@@ -71,6 +71,37 @@ key password file is sealed under that password, and an earlier release
 (after a rollback, or the update helper's automatic revert) reports
 "credential store unavailable" for it until the node runs this release again.
 
+**A restart no longer deletes a subscribed lane's current records.** On a
+node that subscribes to a lane and also holds an older publication of it
+(one it imported as 1.1.9, or one it made of the lane itself), every start
+logged "Retention for ...: keeping batch <old> as the current set — evicted
+... records" and removed the records of the batch the producer states as
+current; the lane then held them again only when its stream fetched them
+anew. The retention pass at start now leaves subscribed lanes to their
+subscription. This held for `--publications only` lanes too.
+
+**`sync subscriptions` shows the lag the store holds.** The lag was the
+count when the batch was last made current, so after its records were
+removed the lane still read "lag: 0 records". It now counts the stated
+batch's records the store does not hold at the time of the listing.
+
+**A batch is no longer refused over records whose bytes came from another
+peer first.** A producer named, as each record's origin on a followed lane,
+the peer it first stored the record's bytes from. When a few records of its
+own lane had first reached it from the follower (or any other peer), the
+follower refused the whole batch with "... records whose ORIGIN_ID names
+another peer ..." and asked again every backoff, and the lane stayed short
+until the next publication was imported. The producer now names the lane's
+producer. Both ends need this release: a follower on this release still
+refuses such a batch from a producer on an earlier one.
+
+**A batch that grows while it is listed is held.** A follower that listed a
+batch the producer was still storing (its carried-over records are tagged
+in place, so the stream is quiet and states the batch while it grows) found
+more records than stated and raised `follow_refused` "the producer lists
+more than N records in batch ...". It now asks the producer's statement
+again and goes on when the same batch has grown.
+
 **CLI config discovery ignores other accounts' processes.** A CLI command
 given no `-c` and no `SDN_CONFIG` used to take its config from any running
 process whose command line read `spacedatanetwork daemon --config ...`,

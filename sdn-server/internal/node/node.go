@@ -5966,6 +5966,15 @@ func (n *Node) applyLaneRetention(schema, providerID, sourceName string, importe
 		log.Debugf("Retention for %s %s/%s not applied: this node produces the lane", schema, providerID, sourceName)
 		return
 	}
+	if _, streamed := n.laneSubscription(schema, providerID, sourceName); streamed {
+		// The followed stream holds the lane's current batch (the one its
+		// producer states) and applies the rule to it (holdBatch,
+		// applyRules). This node's publication ledger never holds the
+		// stream's batches (see retentionSweep): judged from it, a
+		// publication imported here could evict the batch the stream holds.
+		log.Debugf("Retention for %s %s/%s left to the followed stream", schema, providerID, sourceName)
+		return
+	}
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
@@ -6222,8 +6231,10 @@ func (n *Node) releaseLanePins(schema, providerID, sourceName, keep string, only
 // retentionSweep re-evaluates every lane this node holds from a remote peer
 // against its rule. Lanes the node produces itself (the producer is this
 // peer, or not a libp2p peer at all — an xpub-keyed publisher identity) are
-// left alone: a producer manages its own publication history. Idempotent;
-// the caller holds datasetSupersedeMu.
+// left alone: a producer manages its own publication history. Lanes this
+// node subscribes to are left to their subscription (the followed stream's
+// rules below, or the $PNM import's pass as each publication lands).
+// Idempotent; the caller holds datasetSupersedeMu.
 func (n *Node) retentionSweep() {
 	resolver := n.laneRetentionResolver()
 	if resolver == nil || n.store == nil || n.validator == nil || n.host == nil {
@@ -6266,6 +6277,19 @@ func (n *Node) retentionSweep() {
 	for _, lane := range lanes {
 		producer, err := peer.Decode(producers[lane])
 		if err != nil || producer == self {
+			continue
+		}
+		if subscribed, _ := n.laneSubscription(lane.schema, lane.providerID, lane.sourceName); subscribed {
+			// A subscribed lane's current batch is its producer's: the batch
+			// the followed stream holds as the producer states it, or the
+			// publication the $PNM path imported last, which applies the rule
+			// as it lands. Neither writes a row to this node's publication
+			// ledger, which holds only the publications this node made itself
+			// and those it imported through the feed-head path before 1.1.10.
+			// Judged from the ledger, the newest batch is such an old row
+			// whose shard files are still here although its records are long
+			// gone, and keeping it evicted the lane's current records at every
+			// start.
 			continue
 		}
 		n.applyLaneRetentionNow(resolver, lane.schema, lane.providerID, lane.sourceName, storage.RetainCandidate{}, nil)

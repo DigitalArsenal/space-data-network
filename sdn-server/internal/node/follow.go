@@ -1259,6 +1259,29 @@ func (n *Node) subscribedFrom(from peer.ID, schema, providerID, sourceName strin
 	return ok && e.status.Refused == ""
 }
 
+// laneSubscription reports whether this node subscribes to the lane from any
+// producer (subscribed), and whether one of those subscriptions follows it
+// by a stream (streamed: not publications only). A refused subscription
+// (one a later version wrote) counts as neither.
+func (n *Node) laneSubscription(schema, providerID, sourceName string) (subscribed, streamed bool) {
+	if n == nil || n.follows == nil {
+		return false, false
+	}
+	want := normalizeFollowKey(FollowKey{Schema: schema, ProviderID: providerID, SourceName: sourceName})
+	n.follows.mu.Lock()
+	defer n.follows.mu.Unlock()
+	for k, e := range n.follows.subs {
+		if e.status.Refused != "" || k.Schema != want.Schema || k.ProviderID != want.ProviderID || k.SourceName != want.SourceName {
+			continue
+		}
+		subscribed = true
+		if !e.status.PublicationsOnly {
+			streamed = true
+		}
+	}
+	return subscribed, streamed
+}
+
 // followKeepsPublications reports whether this node's subscription to the
 // lane from the peer keeps its publications (FollowPublicationsKeep, or
 // FollowPublicationsOnly: each is imported, at once, with no stream to wait
@@ -1857,7 +1880,7 @@ func (m *followManager) holdBatch(ctx context.Context, st FollowStatus, e *follo
 		return fmt.Errorf("%w: the producer states %d records in batch %s, more than the %d this node holds of a followed batch", errFollowRefused,
 			stmt.Records, stmt.BatchID, followMaxBatchRecords)
 	}
-	list, err := m.producerBatchList(ctx, remote, st, stmt)
+	list, stmt, err := m.producerBatchList(ctx, remote, st, stmt)
 	if err != nil {
 		return fmt.Errorf("read the producer's list of batch %s: %w", stmt.BatchID, err)
 	}
@@ -2016,9 +2039,15 @@ func sortedDifference(a, b []string) []string {
 }
 
 // producerBatchList is the producer's list of the CIDs of its batch (sorted,
-// distinct), read in pages; a list longer than the statement allows (its
-// count and one page more, at most followMaxBatchRecords) is refused.
-func (m *followManager) producerBatchList(ctx context.Context, remote peer.ID, st FollowStatus, stmt syncwire.FollowStatement) ([]string, error) {
+// distinct), read in pages, and the statement the list was read under. A
+// list longer than the statement allows (its count and one page more, at
+// most followMaxBatchRecords) asks the producer's statement again: a batch
+// the producer is still storing grows while it is listed (records carried
+// over from its previous batch are tagged in place and never arrive on the
+// stream, so the stream is quiet and states the batch while it grows). When
+// the producer states the same batch with more records, the list goes on
+// under the new count; otherwise it is refused.
+func (m *followManager) producerBatchList(ctx context.Context, remote peer.ID, st FollowStatus, stmt syncwire.FollowStatement) ([]string, syncwire.FollowStatement, error) {
 	bound := min(stmt.Records+syncwire.FollowCIDPageLimit, followMaxBatchRecords)
 	var list []string
 	cursor := ""
@@ -2026,7 +2055,7 @@ func (m *followManager) producerBatchList(ctx context.Context, remote peer.ID, s
 		stream, err := m.producerRead(ctx, remote, st, stmt.BatchID, cursor, syncwire.FollowCIDPageLimit,
 			syncwire.QRPFilterField{Field: syncwire.FilterProjection, Op: syncwire.QRPFilterEq, Value: syncwire.ProjectionCID})
 		if err != nil {
-			return nil, err
+			return nil, stmt, err
 		}
 		// A subscription stopped while the page is read resets the
 		// stream at once: the producer's read of the list stops then.
@@ -2037,24 +2066,35 @@ func (m *followManager) producerBatchList(ctx context.Context, remote peer.ID, s
 			// A reset, not a close: the producer stops its read of the
 			// list (a close reads to it as the end of the request).
 			_ = stream.Reset()
-			return nil, err
+			return nil, stmt, err
 		}
 		_ = stream.Close()
 		list = append(list, cids...)
 		if int64(len(list)) > bound {
-			return nil, fmt.Errorf("%w: the producer lists more than %d records in batch %s, which it states holds %d", errFollowRefused,
-				bound, stmt.BatchID, stmt.Records)
+			grown, err := m.readStatement(ctx, remote, st.FollowKey)
+			if err != nil || grown.Retracted || grown.BatchID != stmt.BatchID || grown.Records <= stmt.Records || grown.Records > followMaxBatchRecords {
+				return nil, stmt, fmt.Errorf("%w: the producer lists more than %d records in batch %s, which it states holds %d", errFollowRefused,
+					bound, stmt.BatchID, stmt.Records)
+			}
+			log.Infof("Followed lane %s %s/%s from %s: batch %s grew while it was listed (stated %d records, now %d); the list goes on",
+				st.Schema, st.ProviderID, st.SourceName, remote, stmt.BatchID, stmt.Records, grown.Records)
+			stmt = grown.FollowStatement
+			bound = min(stmt.Records+syncwire.FollowCIDPageLimit, followMaxBatchRecords)
+			if int64(len(list)) > bound {
+				return nil, stmt, fmt.Errorf("%w: the producer lists more than %d records in batch %s, which it states holds %d", errFollowRefused,
+					bound, stmt.BatchID, stmt.Records)
+			}
 		}
 		if next == "" {
 			break
 		}
 		if next == cursor {
-			return nil, fmt.Errorf("%w: the producer's list of batch %s does not advance", errFollowRefused, stmt.BatchID)
+			return nil, stmt, fmt.Errorf("%w: the producer's list of batch %s does not advance", errFollowRefused, stmt.BatchID)
 		}
 		cursor = next
 	}
 	slices.Sort(list)
-	return slices.Compact(list), nil
+	return slices.Compact(list), stmt, nil
 }
 
 // holdRecords gives the records of cids batch's tag from remote: those this
@@ -2396,7 +2436,29 @@ func (m *followManager) reservedBytes() int64 {
 }
 
 // Statuses is every followed lane's status, sorted by lane.
+//
+// Lag is read from the store: the records of the stated batch this node
+// holds from the producer now, not the count when the batch was last held,
+// so records removed since (an operator's supersede, a retention pass) show
+// as lag until the lane holds them again.
 func (m *followManager) Statuses() []FollowStatus {
+	out := m.statusSnapshot()
+	for i := range out {
+		st := &out[i]
+		if st.Stated.BatchID == "" || st.Stated.BatchID != st.CurrentBatch || m.n == nil || m.n.store == nil {
+			continue
+		}
+		counts, err := m.n.store.FollowLaneBatchCounts(st.Schema, st.ProviderID, st.SourceName, st.Producer)
+		if err != nil {
+			continue
+		}
+		st.Lag = max(st.Stated.Records-counts[st.Stated.BatchID], 0)
+	}
+	return out
+}
+
+// statusSnapshot is every subscription's status as the manager holds it.
+func (m *followManager) statusSnapshot() []FollowStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()

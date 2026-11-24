@@ -203,55 +203,52 @@ const (
 )
 
 // laneFollowStatus fills a lane's $DSS from what the node received from the
-// lane's followed producers and served to the lane's followers.
-func (h *SyncHandler) laneFollowStatus(lane *SyncLane) {
+// lane's followed producers and served to the lane's followers (follows and
+// served, read once for a whole listing: a follow's lag is a store read).
+func laneFollowStatus(lane *SyncLane, follows []LaneFollow, served []LaneServed) {
 	match := func(schema, provider, source string) bool {
 		return storeSchemaName(schema) == lane.Key.schema && strings.TrimSpace(provider) == lane.Key.providerID &&
 			strings.TrimSpace(source) == lane.Key.sourceName
 	}
-	if h.deps.LaneFollows != nil {
-		for _, f := range h.deps.LaneFollows() {
-			if !match(f.Schema, f.ProviderID, f.SourceName) {
-				continue
+	for _, f := range follows {
+		if !match(f.Schema, f.ProviderID, f.SourceName) {
+			continue
+		}
+		lane.Subscribed = true
+		lane.SyncProtocol = followSyncProtocol
+		if f.PublicationsOnly {
+			lane.SyncProtocol = publicationsSyncProtocol
+		}
+		// A followed lane's total is the producer's stated current
+		// batch, not a publication row (none is written for it).
+		if f.StatedRecords > 0 && uint64(f.StatedRecords) > lane.TotalRows {
+			lane.TotalRows = uint64(f.StatedRecords)
+		}
+		if lane.ProviderPeerID == "" {
+			lane.ProviderPeerID = f.Producer
+		}
+		lane.DownloadedBytes += uint64(max(f.ReceivedBytes, 0))
+		lane.DownloadSpeed += uint64(max(f.ReceiveBytesPerSecond, 0))
+		lane.TransferMs += uint64(max(f.TransferMs, 0))
+		lane.VerifyMs += uint64(max(f.VerifyMs, 0))
+		lane.StoreMs += uint64(max(f.StoreMs, 0))
+		lane.SyncedRows += uint64(max(f.ReceivedRecords, 0))
+		if !f.LastReceivedAt.IsZero() {
+			at := f.LastReceivedAt.UTC().Format(time.RFC3339)
+			if at > lane.LastSyncedAt {
+				lane.LastSyncedAt = at
 			}
-			lane.Subscribed = true
-			lane.SyncProtocol = followSyncProtocol
-			if f.PublicationsOnly {
-				lane.SyncProtocol = publicationsSyncProtocol
-			}
-			// A followed lane's total is the producer's stated current
-			// batch, not a publication row (none is written for it).
-			if f.StatedRecords > 0 && uint64(f.StatedRecords) > lane.TotalRows {
-				lane.TotalRows = uint64(f.StatedRecords)
-			}
-			if lane.ProviderPeerID == "" {
-				lane.ProviderPeerID = f.Producer
-			}
-			lane.DownloadedBytes += uint64(max(f.ReceivedBytes, 0))
-			lane.DownloadSpeed += uint64(max(f.ReceiveBytesPerSecond, 0))
-			lane.TransferMs += uint64(max(f.TransferMs, 0))
-			lane.VerifyMs += uint64(max(f.VerifyMs, 0))
-			lane.StoreMs += uint64(max(f.StoreMs, 0))
-			lane.SyncedRows += uint64(max(f.ReceivedRecords, 0))
-			if !f.LastReceivedAt.IsZero() {
-				at := f.LastReceivedAt.UTC().Format(time.RFC3339)
-				if at > lane.LastSyncedAt {
-					lane.LastSyncedAt = at
-				}
-			}
-			if f.Error != "" && !f.Connected && lane.Error == "" {
-				lane.Error = f.Error
-			}
+		}
+		if f.Error != "" && !f.Connected && lane.Error == "" {
+			lane.Error = f.Error
 		}
 	}
-	if h.deps.LaneServed != nil {
-		for _, s := range h.deps.LaneServed() {
-			if !match(s.Schema, s.ProviderID, s.SourceName) {
-				continue
-			}
-			lane.SubscriberCount += uint32(max(s.Subscribers, 0))
-			lane.ServedBytes += uint64(max(s.ServedBytes, 0))
-			lane.ServeSpeed += uint64(max(s.ServeBytesPerSecond, 0))
+	for _, s := range served {
+		if !match(s.Schema, s.ProviderID, s.SourceName) {
+			continue
 		}
+		lane.SubscriberCount += uint32(max(s.Subscribers, 0))
+		lane.ServedBytes += uint64(max(s.ServedBytes, 0))
+		lane.ServeSpeed += uint64(max(s.ServeBytesPerSecond, 0))
 	}
 }
