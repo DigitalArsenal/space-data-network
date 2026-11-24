@@ -78,7 +78,7 @@ logged "Retention for ...: keeping batch <old> as the current set — evicted
 ... records" and removed the records of the batch the producer states as
 current; the lane then held them again only when its stream fetched them
 anew. The retention pass at start now leaves subscribed lanes to their
-subscription. This held for `--publications only` lanes too.
+subscription.
 
 **`sync subscriptions` shows the lag the store holds.** The lag was the
 count when the batch was last made current, so after its records were

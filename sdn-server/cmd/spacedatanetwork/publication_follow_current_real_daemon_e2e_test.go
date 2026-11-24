@@ -16,11 +16,12 @@ import (
 //     publication ledger holds an older batch of a subscribed lane (here a
 //     publication the receiver made of the lane itself; on a node that ran
 //     1.1.9, the publications its feed-head path imported) keeps the lane's
-//     current records across a restart, for a lane followed by a stream and
-//     for one imported from its publications alone. The start's retention
-//     pass judged the lane from the ledger: the older batch's shard files
-//     are still there although its records are gone, so it kept that batch
-//     and evicted the current one at every start. The subscription's lag is
+//     current records across a restart, and the stream holds the batch
+//     again from them, fetching nothing. The start's retention pass judged
+//     the lane from the ledger: the older batch's shard files are still
+//     there although its records are gone, so it kept that batch and
+//     evicted the current one at every start. A lane imported from its
+//     publications alone keeps its current records too. The subscription's lag is
 //     what the store holds of the producer's batch now, not what it held
 //     when the batch was last made current.
 //   - TestPublicationFollowOwnBytesRealDaemons: a producer's batch holds
@@ -125,8 +126,15 @@ func TestPublicationFollowRestartKeepsCurrentRealDaemons(t *testing.T) {
 	t.Run("publications_only_lane_kept", func(t *testing.T) {
 		holdsThroughout(t, b, "kc-only", onlyWant, 30*time.Second, "after the restart")
 	})
-	if text := readFileString(b.logPath)[mark:]; strings.Contains(text, "keeping batch s1 as the current set") || strings.Contains(text, "keeping batch p1 as the current set") {
-		t.Fatal("the receiver's start kept the batch of its own older publication as a subscribed lane's current set")
+	text := readFileString(b.logPath)[mark:]
+	if strings.Contains(text, "keeping batch s1 as the current set") || strings.Contains(text, "keeping batch p1 as the current set") {
+		t.Error("the receiver's start kept the batch of its own older publication as a subscribed lane's current set")
+	}
+	// The stream holds s2 again from the records the store kept: none is
+	// fetched from the producer a second time.
+	if !strings.Contains(text, "kc-stream from "+a.id+": batch s2 is current (1000 records listed, 1000 tagged from held records, 0 fetched by CID") &&
+		!strings.Contains(text, "kc-stream from "+a.id+": batch s2 is current (1000 records listed, 0 tagged from held records, 0 fetched by CID") {
+		t.Error("after the restart the receiver did not hold batch s2 from the records it kept")
 	}
 
 	t.Run("lag_is_what_the_store_holds", func(t *testing.T) {
