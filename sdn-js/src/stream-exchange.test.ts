@@ -245,4 +245,29 @@ describe('exchangeFlatSqlSyncStream over a real libp2p 3 stream', () => {
       exchangeFlatSqlSyncStream(outbound, new Uint8Array([1]), { timeoutMs: 50, label: 'probe' }),
     ).rejects.toThrow(/probe timed out after 50 ms/);
   }, 30_000);
+
+  it('keeps write open for framed read-chunk and resets the peer stream on timeout', async () => {
+    const [outbound, inbound] = await streamPair({ protocol: PROTOCOL });
+    let sawFirstChunk = false;
+    const inboundResult = (async () => {
+      try {
+        for await (const chunk of inbound) {
+          if (chunk.byteLength > 0) sawFirstChunk = true;
+        }
+        return 'eof';
+      } catch {
+        return 'reset';
+      }
+    })();
+
+    await expect(
+      exchangeFlatSqlSyncStream(outbound, new Uint8Array([4, 0, 0, 0, 1, 2, 3, 4]), {
+        timeoutMs: 50,
+        label: 'read-chunk',
+        keepWriteOpen: true,
+      }),
+    ).rejects.toThrow(/read-chunk timed out after 50 ms/);
+    expect(sawFirstChunk).toBe(true);
+    expect(await inboundResult).toBe('reset');
+  }, 30_000);
 });
