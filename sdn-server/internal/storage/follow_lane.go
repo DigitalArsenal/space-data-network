@@ -108,7 +108,8 @@ func (s *FlatSQLStore) LaneTotals(ctx context.Context, schemaName, providerID, s
 // followReadFault is nil in every release build. A build with the tag
 // sdn_e2e_follow_faults sets it (follow_faults_e2e.go): a test lane's batch
 // list or fetch by CID is a slow store read, for the publication real-daemon
-// tests. read is "list" or "fetch"; it runs under the read's context.
+// tests. read is "list", "listmore" (a list page after the first) or
+// "fetch"; it runs under the read's context.
 var followReadFault func(ctx context.Context, read, sourceName string) error
 
 // LaneBatchCIDPage is one page of a batch's list: the CIDs of the lane's
@@ -135,6 +136,11 @@ func (s *FlatSQLStore) LaneBatchCIDPage(ctx context.Context, schemaName, provide
 	if followReadFault != nil {
 		if err := followReadFault(read, "list", sourceName); err != nil {
 			return nil, 0, false, err
+		}
+		if afterSeq > 0 {
+			if err := followReadFault(read, "listmore", sourceName); err != nil {
+				return nil, 0, false, err
+			}
 		}
 	}
 	// A list is a follower's read: the interactive class, under the

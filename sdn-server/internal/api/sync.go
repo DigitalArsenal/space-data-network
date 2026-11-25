@@ -348,6 +348,14 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read source summaries: %w", err)
 	}
+	var follows []LaneFollow
+	var served []LaneServed
+	if deps.LaneFollows != nil {
+		follows = deps.LaneFollows()
+	}
+	if deps.LaneServed != nil {
+		served = deps.LaneServed()
+	}
 
 	type laneAgg struct {
 		localRows  int64
@@ -616,7 +624,7 @@ func (h *SyncHandler) build(filter SyncFilter) ([]SyncLane, error) {
 				lane.Status = DSSStateSynced
 			}
 		}
-		h.laneFollowStatus(&lane)
+		laneFollowStatus(&lane, follows, served)
 
 		lane.Frame = encodeDSS(&lane)
 		out = append(out, lane)
