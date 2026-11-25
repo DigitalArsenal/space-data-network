@@ -804,6 +804,12 @@ const engineStandardCatalogGraph = `
     PRODUCER:string;
     PRODUCT:ubyte;
   }
+  table DCO {
+    DCO_ID:string;
+    COA_ID:string;
+    TMX_RUN_ID:string;
+    CREATED_UTC:string;
+  }
   table DFH {
     ID:string;
     SAT_NO:uint32;
@@ -2786,6 +2792,28 @@ const engineStandardCatalogGraph = `
     FRAME_QUALITY:ubyte;
     DATA:[ubyte];
   }
+  table RBF {
+    RBF_ID:string;
+    BODY_NAME:string;
+    BODY_NAIF_ID:int;
+    MODEL:byte;
+    MODEL_VERSION:string;
+    MAG_MODEL_ID:string;
+    REFERENCE_FRAME:string;
+    SPECIES:byte;
+    FLUX_TYPE:byte;
+    UNITS:string;
+    EPOCH:string;
+    KP:double;
+    HAS_KP:bool;
+    DST_NT:double;
+    HAS_DST_NT:bool;
+    F107:double;
+    HAS_F107:bool;
+    SOLAR_WIND_PRESSURE_NPA:double;
+    HAS_SOLAR_WIND_PRESSURE:bool;
+    QUANTILE_PCT:double;
+  }
   table RBK {
     RIGID_BODY_REQUEST:ubyte;
   }
@@ -2799,6 +2827,15 @@ const engineStandardCatalogGraph = `
     SPACECRAFT_ID:ushort;
     VIRTUAL_CHANNEL_ID:ubyte;
     DATA:[ubyte];
+  }
+  table RDE {
+    RDE_ID:string;
+    BODY_NAME:string;
+    BODY_NAIF_ID:int;
+    NORAD_CAT_ID:uint;
+    OBJECT_ID:string;
+    WINDOW_START:string;
+    WINDOW_END:string;
   }
   table RDM {
     CCSDS_RDM_VERS:string;
@@ -3852,6 +3889,17 @@ const engineStandardCatalogGraph = `
     FACILITY_TYPE:byte;
     NAME:string;
   }
+  table THP {
+    THP_ID:string;
+    NAME:string;
+    DESCRIPTION:string;
+    CATEGORY:byte;
+    ACCESS_TIER:byte;
+    ACTIVE:bool;
+    LINKED_SCHEMA:string;
+    LINKED_RECORD_ID:string;
+    LINKED_NORAD_CAT_ID:uint;
+  }
   table TIM {
     TIME_SYSTEM:byte;
   }
@@ -3909,6 +3957,18 @@ const engineStandardCatalogGraph = `
     TURN_RATE_DPS:double;
     VERTICAL_RATE_MPS:double;
     MODEL_ID:string;
+  }
+  table TMX {
+    RUN_ID:string;
+    CREATED_UTC:string;
+    WINDOW_START:string;
+    WINDOW_END:string;
+    PROPAGATOR:byte;
+    PROPAGATOR_ID:string;
+    EXECUTION_HOST:byte;
+    SCORING_PROFILE_ID:string;
+    CHUNK_INDEX:uint32;
+    IS_FINAL_CHUNK:bool;
   }
   table TNR {
     NODE_ID:string;
@@ -4202,6 +4262,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"CZM.fbs":  {Table: "CZM", FileID: "$CZM"},
 	"DAV.fbs":  {Table: "DAV", FileID: "$DAV"},
 	"DCL.fbs":  {Table: "DCL", FileID: "$DCL"},
+	"DCO.fbs":  {Table: "DCO", FileID: "$DCO"},
 	"DFH.fbs":  {Table: "DFH", FileID: "$DFH"},
 	"DMG.fbs":  {Table: "DMG", FileID: "$DMG"},
 	"DOA.fbs":  {Table: "DOA", FileID: "$DOA"},
@@ -4346,8 +4407,10 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"QEM.fbs":  {Table: "QEM", FileID: "$QEM"},
 	"QRP.fbs":  {Table: "QRP", FileID: "$QRP"},
 	"RAF.fbs":  {Table: "RAF", FileID: "$RAF"},
+	"RBF.fbs":  {Table: "RBF", FileID: "$RBF"},
 	"RBK.fbs":  {Table: "RBK", FileID: "$RBK"},
 	"RCF.fbs":  {Table: "RCF", FileID: "$RCF"},
+	"RDE.fbs":  {Table: "RDE", FileID: "$RDE"},
 	"RDM.fbs":  {Table: "RDM", FileID: "$RDM"},
 	"RDO.fbs":  {Table: "RDO", FileID: "$RDO"},
 	"REC.fbs":  {Table: "REC", FileID: "$REC"},
@@ -4418,11 +4481,13 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"TCT.fbs":  {Table: "TCT", FileID: "$TCT"},
 	"TDM.fbs":  {Table: "TDM", FileID: "$TDM"},
 	"TFN.fbs":  {Table: "TFN", FileID: "$TFN"},
+	"THP.fbs":  {Table: "THP", FileID: "$THP"},
 	"TIM.fbs":  {Table: "TIM", FileID: "$TIM"},
 	"TKG.fbs":  {Table: "TKG", FileID: "$TKG"},
 	"TME.fbs":  {Table: "TME", FileID: "$TME"},
 	"TMF.fbs":  {Table: "TMF", FileID: "$TMF"},
 	"TMS.fbs":  {Table: "TMS", FileID: "$TMS"},
+	"TMX.fbs":  {Table: "TMX", FileID: "$TMX"},
 	"TNR.fbs":  {Table: "TNR", FileID: "$TNR"},
 	"TPN.fbs":  {Table: "TPN", FileID: "$TPN"},
 	"TRE.fbs":  {Table: "TRE", FileID: "$TRE"},

@@ -26,6 +26,7 @@ export const SUPPORTED_SCHEMAS = [
   'CHN.fbs',    // Communications Channel
   'CLT.fbs',    // Command Link Transmission Unit Service (CCSDS 912.3-B-2)
   'CMS.fbs',    // Communications Payload
+  'COA.fbs',    // Course of Action - Defensive and mission course-of-action inputs
   'COM.fbs',    // Communications Systems
   'COT.fbs',    // Cursor on Target Event
   'CRD.fbs',    // Coordinate Systems
@@ -33,6 +34,7 @@ export const SUPPORTED_SCHEMAS = [
   'CSM.fbs',    // Conjunction Summary Message - Brief conjunction events
   'CTR.fbs',    // Contact Report - Communication contact reports
   'CZM.fbs',    // CZML Document
+  'DCO.fbs',    // Defensive COA Trade & Conflict-Recheck - Quantified defensive COA trades and conflict re-screening
   'DFH.fbs',    // GEO Drift History
   'DMG.fbs',    // Damage Models
   'DOA.fbs',    // Difference of Arrival Geolocation
@@ -121,7 +123,9 @@ export const SUPPORTED_SCHEMAS = [
   'PRW.fbs',    // Propagator Runtime Wire
   'PUR.fbs',    // Purchase Request - Marketplace purchase requests
   'RAF.fbs',    // Return All Frames Service (CCSDS 913.1-B-2)
+  'RBF.fbs',    // Radiation Belt Flux - Multi-body planetary trapped radiation belt flux and SAA contours
   'RCF.fbs',    // Return Channel Frames Service (CCSDS 913.5-B-2)
+  'RDE.fbs',    // Radiation Effects - Spacecraft and crew radiation dose, shielding, SEE/TID, and SEP effects
   'RDM.fbs',    // Reentry Data Message
   'RDO.fbs',    // Radar Observation
   'REC.fbs',    // Records - Data records and observations
@@ -158,10 +162,12 @@ export const SUPPORTED_SCHEMAS = [
   'TAB.fbs',    // Typed Arena Buffer
   'TCF.fbs',    // Telecommand Transfer Frame (CCSDS 232.0-B-3)
   'TDM.fbs',    // Tracking Data Message - Radar/optical observations
+  'THP.fbs',    // Threat Profile - Signed threat lane capability parameters and provenance
   'TIM.fbs',    // Time Message - Time synchronization data
   'TKG.fbs',    // Tracking and Data Fusion
   'TME.fbs',    // Time Systems
   'TMF.fbs',    // Telemetry Transfer Frame (CCSDS 132.0-B-2)
+  'TMX.fbs',    // Multi-Phenomenology Threat Matrix - Deterministic threat matrix assessments and rollups
   'TPN.fbs',    // Transponder
   'TRK.fbs',    // Track
   'TRN.fbs',    // Terrain Models
@@ -200,6 +206,7 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'CHN.fbs': 'Communications Channel',
   'CLT.fbs': 'Command Link Transmission Unit Service (CCSDS 912.3-B-2)',
   'CMS.fbs': 'Communications Payload',
+  'COA.fbs': 'Course of Action - Defensive and mission course-of-action inputs',
   'COM.fbs': 'Communications Systems',
   'COT.fbs': 'Cursor on Target Event',
   'CRD.fbs': 'Coordinate Systems',
@@ -207,6 +214,7 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'CSM.fbs': 'Conjunction Summary Message - Brief conjunction events',
   'CTR.fbs': 'Contact Report - Communication contact reports',
   'CZM.fbs': 'CZML Document',
+  'DCO.fbs': 'Defensive COA Trade & Conflict-Recheck - Quantified defensive COA trades and conflict re-screening',
   'DFH.fbs': 'GEO Drift History',
   'DMG.fbs': 'Damage Models',
   'DOA.fbs': 'Difference of Arrival Geolocation',
@@ -295,7 +303,9 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'PRW.fbs': 'Propagator Runtime Wire',
   'PUR.fbs': 'Purchase Request - Marketplace purchase requests',
   'RAF.fbs': 'Return All Frames Service (CCSDS 913.1-B-2)',
+  'RBF.fbs': 'Radiation Belt Flux - Multi-body planetary trapped radiation belt flux and SAA contours',
   'RCF.fbs': 'Return Channel Frames Service (CCSDS 913.5-B-2)',
+  'RDE.fbs': 'Radiation Effects - Spacecraft and crew radiation dose, shielding, SEE/TID, and SEP effects',
   'RDM.fbs': 'Reentry Data Message',
   'RDO.fbs': 'Radar Observation',
   'REC.fbs': 'Records - Data records and observations',
@@ -332,10 +342,12 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'TAB.fbs': 'Typed Arena Buffer',
   'TCF.fbs': 'Telecommand Transfer Frame (CCSDS 232.0-B-3)',
   'TDM.fbs': 'Tracking Data Message - Radar/optical observations',
+  'THP.fbs': 'Threat Profile - Signed threat lane capability parameters and provenance',
   'TIM.fbs': 'Time Message - Time synchronization data',
   'TKG.fbs': 'Tracking and Data Fusion',
   'TME.fbs': 'Time Systems',
   'TMF.fbs': 'Telemetry Transfer Frame (CCSDS 132.0-B-2)',
+  'TMX.fbs': 'Multi-Phenomenology Threat Matrix - Deterministic threat matrix assessments and rollups',
   'TPN.fbs': 'Transponder',
   'TRK.fbs': 'Track',
   'TRN.fbs': 'Terrain Models',
@@ -372,6 +384,7 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'CHN.fbs': '',
   'CLT.fbs': '',
   'CMS.fbs': '',
+  'COA.fbs': '',
   'COM.fbs': '',
   'COT.fbs': '',
   'CRD.fbs': '',
@@ -379,6 +392,7 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'CSM.fbs': '',
   'CTR.fbs': '',
   'CZM.fbs': '',
+  'DCO.fbs': '',
   'DFH.fbs': '',
   'DMG.fbs': '',
   'DOA.fbs': '',
@@ -467,7 +481,9 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'PRW.fbs': '',
   'PUR.fbs': '',
   'RAF.fbs': '',
+  'RBF.fbs': '',
   'RCF.fbs': '',
+  'RDE.fbs': '',
   'RDM.fbs': '',
   'RDO.fbs': '',
   'REC.fbs': '',
@@ -504,10 +520,12 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'TAB.fbs': '',
   'TCF.fbs': '',
   'TDM.fbs': '',
+  'THP.fbs': '',
   'TIM.fbs': '',
   'TKG.fbs': '',
   'TME.fbs': '',
   'TMF.fbs': '',
+  'TMX.fbs': '',
   'TPN.fbs': '',
   'TRK.fbs': '',
   'TRN.fbs': '',

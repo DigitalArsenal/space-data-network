@@ -48,7 +48,22 @@ const (
 	// greppable, is listed on every boot, and can be flipped to "allowlist"
 	// by editing one file.
 	GrantPolicyLinkKey = "link-key"
+
+	// GrantPolicySubscription requires an active paid entitlement in
+	// EntitlementStore (subscription-gated compute offload or commercial tier).
+	GrantPolicySubscription = "subscription"
+
+	// DefaultComputeFallbackSignal is emitted in X-SDN-Compute-Fallback when
+	// remote compute offload fails closed.
+	DefaultComputeFallbackSignal = "browser-local"
 )
+
+// ComputeOffloadPolicy configures subscription-gated remote WASM execution.
+type ComputeOffloadPolicy struct {
+	Policy         string   `json:"policy,omitempty"`
+	RequiredPlans  []string `json:"required_plans,omitempty"`
+	FallbackSignal string   `json:"fallback_signal,omitempty"`
+}
 
 // GrantPolicyFileName is the operator-owned policy file, read from the plugin
 // root beside catalog.json. It is deliberately NOT a compiled-in table and NOT
@@ -91,6 +106,13 @@ type GrantPolicyConfig struct {
 	// whose key is superseded must stop being handed out soon. Zero retires
 	// at once.
 	RetireSupersededAfterSeconds *int `json:"retire_superseded_after_seconds,omitempty"`
+
+	// ComputeOffload configures subscription-gated remote WASM compute offload.
+	ComputeOffload *ComputeOffloadPolicy `json:"compute_offload,omitempty"`
+
+	// THPTiers maps ACCESS_TIER names ("OPEN", "COMMERCIAL", "GOVERNMENT")
+	// to access policies ("open", "subscription", "allowlist").
+	THPTiers map[string]string `json:"thp_tiers,omitempty"`
 }
 
 // DeliveryLimitsConfig is the "delivery_limits" block of grant-policy.json.
@@ -231,7 +253,139 @@ func (c *GrantPolicyConfig) Validate() error {
 			return fmt.Errorf("modules[%d] (%s): policy is required", i, rule.Match)
 		}
 	}
+	if c.ComputeOffload != nil {
+		policy := strings.ToLower(strings.TrimSpace(c.ComputeOffload.Policy))
+		switch policy {
+		case "", GrantPolicySubscription, GrantPolicyAllowlist, GrantPolicyOpen:
+		default:
+			return fmt.Errorf("compute_offload.policy: unknown policy %q", c.ComputeOffload.Policy)
+		}
+	}
+	for tier, rawPolicy := range c.THPTiers {
+		if strings.TrimSpace(tier) == "" {
+			return fmt.Errorf("thp_tiers: empty tier key")
+		}
+		policy := strings.ToLower(strings.TrimSpace(rawPolicy))
+		switch policy {
+		case GrantPolicyOpen, GrantPolicySubscription, GrantPolicyAllowlist:
+		default:
+			return fmt.Errorf("thp_tiers[%q]: unknown policy %q", tier, rawPolicy)
+		}
+	}
 	return nil
+}
+
+// ComputeFallbackSignal returns the configured fallback header value when remote
+// compute offload fails closed.
+func (c *GrantPolicyConfig) ComputeFallbackSignal() string {
+	if c != nil && c.ComputeOffload != nil {
+		if signal := strings.TrimSpace(c.ComputeOffload.FallbackSignal); signal != "" {
+			return signal
+		}
+	}
+	return DefaultComputeFallbackSignal
+}
+
+// ResolveComputeOffloadAccess enforces fail-closed subscription gating for
+// remote WASM compute offload.
+func (c *GrantPolicyConfig) ResolveComputeOffloadAccess(ent *Entitlement, now time.Time) (bool, string) {
+	if c == nil {
+		return false, "compute offload grant policy unavailable"
+	}
+	policy := GrantPolicySubscription
+	if c.ComputeOffload != nil {
+		if p := strings.ToLower(strings.TrimSpace(c.ComputeOffload.Policy)); p != "" {
+			policy = p
+		}
+	}
+	if c.EnforceAllowlistOnly && policy == GrantPolicyOpen {
+		policy = GrantPolicyAllowlist
+	}
+	switch policy {
+	case GrantPolicyOpen:
+		return true, "open"
+	case GrantPolicySubscription, GrantPolicyAllowlist:
+		if ent == nil {
+			return false, "authentication and active subscription required"
+		}
+		if !ent.IsActive(now) {
+			return false, "subscription entitlement is inactive or expired"
+		}
+		plan := strings.ToLower(strings.TrimSpace(ent.Plan))
+		if plan == "" || plan == defaultPlan {
+			return false, "paid subscription plan required"
+		}
+		var required []string
+		if c.ComputeOffload != nil {
+			required = c.ComputeOffload.RequiredPlans
+		}
+		if len(required) > 0 {
+			for _, candidate := range required {
+				if strings.EqualFold(strings.TrimSpace(candidate), plan) {
+					return true, fmt.Sprintf("entitled (%s)", plan)
+				}
+			}
+			return false, fmt.Sprintf("plan %q is not entitled for compute offload", ent.Plan)
+		}
+		if policy == GrantPolicyAllowlist {
+			return false, "compute offload allowlist is empty"
+		}
+		return true, fmt.Sprintf("entitled (%s)", plan)
+	default:
+		return false, fmt.Sprintf("unknown compute offload policy %q", policy)
+	}
+}
+
+// ResolveTHPAccess enforces tier-based access control for $THP records based on
+// thp_tiers in grant-policy.json.
+func (c *GrantPolicyConfig) ResolveTHPAccess(tier string, ent *Entitlement, now time.Time) (bool, string) {
+	normalizedTier := strings.ToUpper(strings.TrimSpace(tier))
+	if normalizedTier == "" {
+		normalizedTier = "OPEN"
+	}
+	policy := ""
+	if c != nil && len(c.THPTiers) > 0 {
+		for k, v := range c.THPTiers {
+			if strings.EqualFold(strings.TrimSpace(k), normalizedTier) {
+				policy = strings.ToLower(strings.TrimSpace(v))
+				break
+			}
+		}
+	}
+	if policy == "" {
+		switch normalizedTier {
+		case "OPEN":
+			policy = GrantPolicyOpen
+		case "COMMERCIAL":
+			policy = GrantPolicySubscription
+		case "GOVERNMENT":
+			policy = GrantPolicyAllowlist
+		default:
+			return false, fmt.Sprintf("unknown access tier %q", tier)
+		}
+	}
+	if c != nil && c.EnforceAllowlistOnly && policy == GrantPolicyOpen {
+		policy = GrantPolicyAllowlist
+	}
+	switch policy {
+	case GrantPolicyOpen:
+		return true, "open"
+	case GrantPolicySubscription:
+		return c.ResolveComputeOffloadAccess(ent, now)
+	case GrantPolicyAllowlist:
+		if ent == nil || !ent.IsActive(now) {
+			return false, fmt.Sprintf("%s tier requires an active entitled account", normalizedTier)
+		}
+		plan := strings.ToLower(strings.TrimSpace(ent.Plan))
+		switch plan {
+		case "government", "enterprise", "spaceedge":
+			return true, fmt.Sprintf("allowlisted (%s)", plan)
+		default:
+			return false, fmt.Sprintf("%s tier requires restricted authorization", normalizedTier)
+		}
+	default:
+		return false, fmt.Sprintf("unknown tier policy %q", policy)
+	}
 }
 
 // ResolvedGrantPolicy is the effective policy for one module plus the audit

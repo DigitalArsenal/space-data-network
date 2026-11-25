@@ -5,7 +5,7 @@ go 1.26.5
 toolchain go1.26.11
 
 require (
-	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.292.0
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.294.1
 	github.com/caddyserver/certmagic v0.25.3
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
@@ -17,6 +17,7 @@ require (
 	github.com/ipfs/go-block-format v0.2.4
 	github.com/ipfs/go-cid v0.6.2
 	github.com/ipfs/go-datastore v0.9.2
+	github.com/ipfs/go-ipld-format v0.6.4
 	github.com/ipfs/go-log/v2 v2.9.2
 	github.com/ipfs/kubo v0.43.1
 	github.com/ipld/go-car/v2 v2.17.0
@@ -131,7 +132,6 @@ require (
 	github.com/ipfs/go-ipfs-pq v0.0.4 // indirect
 	github.com/ipfs/go-ipfs-redirects-file v0.1.2 // indirect
 	github.com/ipfs/go-ipld-cbor v0.3.0 // indirect
-	github.com/ipfs/go-ipld-format v0.6.4 // indirect
 	github.com/ipfs/go-ipld-git v0.1.3 // indirect
 	github.com/ipfs/go-ipld-legacy v0.3.0 // indirect
 	github.com/ipfs/go-libdht v0.5.0 // indirect

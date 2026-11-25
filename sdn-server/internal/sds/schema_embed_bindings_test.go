@@ -62,6 +62,7 @@ import (
 	bCZM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CZM"
 	bDAV "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DAV"
 	bDCL "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DCL"
+	bDCO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DCO"
 	bDFH "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DFH"
 	bDMG "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DMG"
 	bDOA "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DOA"
@@ -205,8 +206,10 @@ import (
 	bQEM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/QEM"
 	bQRP "github.com/DigitalArsenal/spacedatastandards.org/lib/go/QRP"
 	bRAF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/RAF"
+	bRBF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/RBF"
 	bRBK "github.com/DigitalArsenal/spacedatastandards.org/lib/go/RBK"
 	bRCF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/RCF"
+	bRDE "github.com/DigitalArsenal/spacedatastandards.org/lib/go/RDE"
 	bRDM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/RDM"
 	bRDO "github.com/DigitalArsenal/spacedatastandards.org/lib/go/RDO"
 	bREC "github.com/DigitalArsenal/spacedatastandards.org/lib/go/REC"
@@ -277,11 +280,13 @@ import (
 	bTCT "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TCT"
 	bTDM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TDM"
 	bTFN "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TFN"
+	bTHP "github.com/DigitalArsenal/spacedatastandards.org/lib/go/THP"
 	bTIM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TIM"
 	bTKG "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TKG"
 	bTME "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TME"
 	bTMF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TMF"
 	bTMS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TMS"
+	bTMX "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TMX"
 	bTNR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TNR"
 	bTPN "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TPN"
 	bTRE "github.com/DigitalArsenal/spacedatastandards.org/lib/go/TRE"
@@ -370,6 +375,7 @@ var driftGuardedSchemas = []struct {
 	{"CZM.fbs", &bCZM.CZM{}},
 	{"DAV.fbs", &bDAV.DAV{}},
 	{"DCL.fbs", &bDCL.DCL{}},
+	{"DCO.fbs", &bDCO.DCO{}},
 	{"DFH.fbs", &bDFH.DFH{}},
 	{"DMG.fbs", &bDMG.DMG{}},
 	{"DOA.fbs", &bDOA.DOA{}},
@@ -513,8 +519,10 @@ var driftGuardedSchemas = []struct {
 	{"QEM.fbs", &bQEM.QEM{}},
 	{"QRP.fbs", &bQRP.QRP{}},
 	{"RAF.fbs", &bRAF.RAF{}},
+	{"RBF.fbs", &bRBF.RBF{}},
 	{"RBK.fbs", &bRBK.RBK{}},
 	{"RCF.fbs", &bRCF.RCF{}},
+	{"RDE.fbs", &bRDE.RDE{}},
 	{"RDM.fbs", &bRDM.RDM{}},
 	{"RDO.fbs", &bRDO.RDO{}},
 	{"REC.fbs", &bREC.REC{}},
@@ -585,11 +593,13 @@ var driftGuardedSchemas = []struct {
 	{"TCT.fbs", &bTCT.TCT{}},
 	{"TDM.fbs", &bTDM.TDM{}},
 	{"TFN.fbs", &bTFN.TFN{}},
+	{"THP.fbs", &bTHP.THP{}},
 	{"TIM.fbs", &bTIM.TIM{}},
 	{"TKG.fbs", &bTKG.TKG{}},
 	{"TME.fbs", &bTME.TME{}},
 	{"TMF.fbs", &bTMF.TMF{}},
 	{"TMS.fbs", &bTMS.TMS{}},
+	{"TMX.fbs", &bTMX.TMX{}},
 	{"TNR.fbs", &bTNR.TNR{}},
 	{"TPN.fbs", &bTPN.TPN{}},
 	{"TRE.fbs", &bTRE.TRE{}},

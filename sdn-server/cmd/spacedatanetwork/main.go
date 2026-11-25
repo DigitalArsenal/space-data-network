@@ -1329,6 +1329,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			searchAPI.RegisterRoutes(adminMux)
 			conjunctionAPI := api.NewConjunctionHandler(n.Store())
 			conjunctionAPI.RegisterRoutes(adminMux)
+			computeAPI := api.NewComputeHandler(n.ComputeService(), func() *auth.Handler { return authHandler })
+			computeAPI.RegisterRoutes(adminMux)
 			channelOpts := channelHandlerOptionsForIdentity(n.Identity())
 			// U4.2 (M2): grant issuances land in the node's activity ring.
 			channelOpts.ActivityRing = n.ActivityRing()

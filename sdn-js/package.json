@@ -121,8 +121,8 @@
     "monaco-editor": "^0.55.1",
     "multiformats": "^14.0.5",
     "qrcode": "^1.5.3",
-    "space-data-module-sdk": "0.10.4",
-    "spacedatastandards.org": "1.292.0",
+    "space-data-module-sdk": "0.12.0",
+    "spacedatastandards.org": "1.294.1",
     "uint8arraylist": "^3.0.2",
     "uint8arrays": "^6.1.1",
     "vcard-cryptoperson": "^1.1.10"

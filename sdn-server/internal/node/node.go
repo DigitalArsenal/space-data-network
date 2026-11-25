@@ -50,6 +50,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
+	"github.com/spacedatanetwork/sdn-server/internal/compute"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/credstore"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
@@ -223,6 +224,8 @@ type Node struct {
 	tipQueue *sdnpubsub.TipQueue
 
 	pluginRegistry          *license.PluginRegistry
+	entitlements            *license.EntitlementStore
+	computeSvc              *compute.Service
 	licensingModule         *modulert.Module
 	capabilityPolicy        *modulert.CapabilityPolicyStore
 	moduleSignaturePolicy   *modulert.ModuleSignaturePolicy
@@ -1078,6 +1081,15 @@ func (n *Node) init() error {
 	n.host.Network().Notify(&epmExchangeNotifee{node: n})
 	n.requestEPMFromConnectedPeers("peer-connect")
 
+	if n.store != nil {
+		entStore, entErr := license.NewEntitlementStore(n.store, n.host.ID().String())
+		if entErr != nil {
+			log.Warnf("Entitlement store initialization failed (compute offload will fail closed): %v", entErr)
+		} else {
+			n.entitlements = entStore
+		}
+	}
+
 	// Initialize runtime plugins.
 	n.plugins = plugins.New()
 	if err := n.plugins.Register(ailogplugin.New()); err != nil {
@@ -1279,6 +1291,7 @@ func (n *Node) init() error {
 	if err := n.plugins.StartAll(n.ctx, pluginCtx); err != nil {
 		log.Warnf("Plugin startup completed with errors: %v", err)
 	}
+	n.initComputeService()
 
 	return nil
 }

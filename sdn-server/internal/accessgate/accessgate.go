@@ -34,6 +34,7 @@ var DefaultPublic = []string{
 	"POST /api/v1/cellular/aggregate",
 	"/api/v1/data/index",
 	"/api/v1/channels/",
+	"POST /api/v1/compute/invoke",
 	// spaceaware.io marketplace, sdn-js storefront client, payment webhook.
 	"/api/storefront/listings",
 	"/api/storefront/listings/",

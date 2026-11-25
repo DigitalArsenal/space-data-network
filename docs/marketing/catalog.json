@@ -1156,6 +1156,119 @@
       "learnMore": "https://spacedatanetwork.org/modules.html",
       "evidence": "live modules.pmm CORE foundation and hostcap rows; space-data-network-modules/foundation/*, hostcap/*; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
       "plan": "free"
+    },
+    {
+      "id": "threat-matrix",
+      "name": "Multi-phenomenology threat matrix ($TMX/$THP)",
+      "category": "space-safety",
+      "tagline": "Multi-phenomenology threat scoring on signed open lanes",
+      "summary": "Evaluates co-orbital, direct-ascent, RF jammer, GNSS denial, directed-energy, space weather and ISR custody threats against spacecraft states and signed $THP threat lanes over any pluggable propagator.",
+      "capabilities": [
+        "Co-orbital, direct-ascent, RF jammer, GNSS denial, directed-energy, space weather and ISR custody scoring over pluggable propagators",
+        "Signed $THP threat profile lanes referencing $OMM, $SIT, $RFB and $SWS records",
+        "Deterministic chunked $TMX outputs matching between browser WASM and SDN offload",
+        "Analyst what-if parameter templates with explicit provenance tiers"
+      ],
+      "standards": [
+        "SDS TMX",
+        "SDS THP",
+        "SDS SCR",
+        "CCSDS OMM"
+      ],
+      "access": "free",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "space-data-network-modules analysis/threat-matrix (com.digitalarsenal.analysis.threat-matrix); deployment/license/grant-policy.json explicitly sets policy open (ANONYMOUS) for com.digitalarsenal.analysis.threat-matrix; $THP default lanes ship with ACCESS_TIER OPEN",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Signed $THP default lanes and browser-local WASM threat matrix evaluation"
+      ],
+      "planNote": "The plan covers SDN server compute offload processing. Signed $THP lanes and browser-local module execution stay free."
+    },
+    {
+      "id": "coa-synthesizer",
+      "name": "Defensive COA synthesizer ($COA/$DCO)",
+      "category": "space-safety",
+      "tagline": "Rank defensive maneuvers and countermeasure trades",
+      "summary": "Synthesizes and evaluates defensive courses of action ($COA) with post-maneuver conflict recheck ($DCO) against multi-phenomenology threat matrices.",
+      "capabilities": [
+        "Synthesizes maneuver, RF/PNT mitigation and posture COAs from $TMX threat cells",
+        "Quantifies delta-v cost, post-burn miss distance and conflict recheck outcomes in $DCO",
+        "Pluggable propagator and deterministic scoring parity between browser and node runtimes"
+      ],
+      "standards": [
+        "SDS COA",
+        "SDS DCO",
+        "SDS TMX"
+      ],
+      "access": "free",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "space-data-network-modules analysis/coa-synthesizer (com.digitalarsenal.analysis.coa-synthesizer); deployment/license/grant-policy.json explicitly sets policy open (ANONYMOUS) for com.digitalarsenal.analysis.coa-synthesizer",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Browser-local WASM COA synthesis and evaluation"
+      ],
+      "planNote": "The plan covers SDN server compute offload processing. Browser-local WASM synthesis stays free."
+    },
+    {
+      "id": "radiation-belts-effects",
+      "name": "Trapped radiation belts and spacecraft effects ($RBF/$RDE)",
+      "category": "space-safety",
+      "tagline": "Van Allen flux and dose-rate effects along any trajectory",
+      "summary": "Computes trapped proton and electron flux spectra ($RBF) and single-event, TID and charging effects ($RDE) over $SCR grids and propagated ephemeris.",
+      "capabilities": [
+        "AE-8/AP-8 belt flux models published as $RBF records",
+        "Single-event upset, total ionizing dose and internal charging rates in $RDE",
+        "Feeds directly into multi-phenomenology space-weather threat cells"
+      ],
+      "standards": [
+        "SDS RBF",
+        "SDS RDE",
+        "SDS SCR"
+      ],
+      "access": "free",
+      "delivery": "sdn-module",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/modules.html",
+      "evidence": "space-data-network-modules analysis/radiation-belts and analysis/radiation-effects (com.digitalarsenal.analysis.radiation-belts, com.digitalarsenal.analysis.radiation-effects); deployment/license/grant-policy.json explicitly sets policy open (ANONYMOUS) for both modules",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Open belt models and browser-local radiation effects computation"
+      ],
+      "planNote": "The plan covers SDN server compute offload processing. Open modules run free locally."
+    },
+    {
+      "id": "threat-matrix-compute-offload",
+      "name": "SDN server compute offload ($PIV)",
+      "category": "space-safety",
+      "tagline": "Offload multi-phenomenology matrix and COA runs to WasmEdge",
+      "summary": "Submits schema-tagged $PIV jobs to subscribed SDN nodes over HTTP or libp2p and streams byte-identical $TMX, $COA and $DCO FlatBuffers from native WasmEdge execution, falling back to browser-local WASM when unsubscribed.",
+      "capabilities": [
+        "Streaming $PIV compute invocation on subscribed SDN nodes over FlatBuffers",
+        "Native WasmEdge execution producing byte-identical $TMX, $COA and $DCO outputs",
+        "Fail-closed entitlement enforcement returning X-SDN-Compute-Fallback: browser-local and $QRP subscription_required for local browser fallback",
+        "Zero-JSON binary transport across HTTP and libp2p streams"
+      ],
+      "standards": [
+        "SDS PIV",
+        "SDS QRP",
+        "SDS ENT",
+        "SDS TMX",
+        "SDS DCO"
+      ],
+      "access": "add-on",
+      "delivery": "node",
+      "covers": [],
+      "learnMore": "https://spacedatanetwork.org/marketing.html",
+      "evidence": "deployment/license/grant-policy.json compute_offload policy ENTITLED (plans analysis, enterprise; fallback browser-local); sdn-server/internal/api/compute.go POST /api/v1/compute/invoke and sdn-server/internal/node/compute.go /space-data-network/compute-invoke/1.0.0; scripts/thp-compute-offload.e2e.mjs",
+      "plan": "analysis",
+      "freeCapabilities": [
+        "Browser-local WASM execution fallback and open $THP threat profile lanes"
+      ],
+      "planNote": "Compute offload requires an active analysis or enterprise plan. Unsubscribed callers fall back to browser-local WASM."
     }
   ],
   "licenseClasses": {
@@ -2056,6 +2169,10 @@
         "maneuver-detection",
         "maneuver-planning",
         "launch-reentry",
+        "threat-matrix",
+        "coa-synthesizer",
+        "radiation-belts-effects",
+        "threat-matrix-compute-offload",
         "analyze-toolkit",
         "mission-timeline",
         "data-publishing",
@@ -2225,7 +2342,11 @@
         "module-building-blocks",
         "solar-system",
         "local-volume",
-        "beyond-earth-catalogs"
+        "beyond-earth-catalogs",
+        "threat-matrix",
+        "coa-synthesizer",
+        "radiation-belts-effects",
+        "threat-matrix-compute-offload"
       ],
       "pricing": "request",
       "price": null

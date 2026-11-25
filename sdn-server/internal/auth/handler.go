@@ -1149,6 +1149,16 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// SessionFromRequestOrSigned extracts and validates the caller's session from
+// the request context, sdn_wallet_session cookie, or SDN-Signed Authorization
+// header without falling back to implicit loopback sessions.
+func (h *Handler) SessionFromRequestOrSigned(r *http.Request) (*Session, error) {
+	if h == nil || r == nil {
+		return nil, errors.New("authentication handler unavailable")
+	}
+	return h.sessionFromRequestStrict(r)
+}
+
 // sessionFromRequest extracts and validates the session from a request cookie.
 // sessionFromRequest resolves the caller's session, in three ordered modes.
 //

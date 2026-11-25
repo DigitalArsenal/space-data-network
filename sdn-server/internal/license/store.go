@@ -77,7 +77,7 @@ func (s *EntitlementStore) loadProjection() error {
 			if record.RowID > afterRowID {
 				afterRowID = record.RowID
 			}
-			ent, err := decodeEntitlementRecord(record.Data)
+			ent, err := DecodeEntitlementRecord(record.Data)
 			if err != nil {
 				s.mu.Unlock()
 				return fmt.Errorf("decode entitlement record %s: %w", record.CID, err)
@@ -126,6 +126,30 @@ func (s *EntitlementStore) GetEntitlement(xpub string) (*Entitlement, error) {
 		return nil, nil
 	}
 	return cloneEntitlement(ent), nil
+}
+
+// GetEntitlementByPeerID returns the latest entitlement matching a bound peer ID.
+func (s *EntitlementStore) GetEntitlementByPeerID(peerID string) (*Entitlement, error) {
+	peerID = strings.TrimSpace(peerID)
+	if peerID == "" {
+		return nil, errors.New("peer id is required")
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var best *Entitlement
+	for _, ent := range s.entitlements {
+		if ent == nil || strings.TrimSpace(ent.PeerID) != peerID {
+			continue
+		}
+		if best == nil || ent.UpdatedAt >= best.UpdatedAt {
+			best = ent
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+	return cloneEntitlement(best), nil
 }
 
 // GetOrCreateEntitlement returns current entitlement or creates an active free plan.
@@ -309,7 +333,11 @@ func encodeEntitlementRecord(ent *Entitlement) ([]byte, error) {
 	return builder.FinishedBytes(), nil
 }
 
-func decodeEntitlementRecord(data []byte) (*Entitlement, error) {
+// DecodeEntitlementRecord decodes a bare or size-prefixed $ENT FlatBuffer.
+func DecodeEntitlementRecord(data []byte) (*Entitlement, error) {
+	if len(data) >= 12 && sdsent.SizePrefixedENTBufferHasIdentifier(data) {
+		data = data[4:]
+	}
 	if len(data) == 0 {
 		return nil, errors.New("empty entitlement record")
 	}
