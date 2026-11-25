@@ -242,9 +242,11 @@ func (s *ConcreteDatasetPublicationService) RunPublicationRetract(ctx context.Co
 		return report, err
 	}
 	report.RetractedAt = &at
-	// The lane is never published again: its failed scopes go with the
-	// mark, and its publication_failed alert clears.
+	// The lane is never published again: its failed scopes and pending
+	// interrupted-publication marks go with the retraction, and its
+	// publication_failed alert clears.
 	s.laneRetracted(datasetPublicationLaneName(DatasetPublicationRequest{Schema: schema, ProviderID: lane.ProviderID, SourceName: lane.SourceName}))
+	s.runs.unmarkLane(lane)
 	result, err := s.executePublicationRetention(ctx, lane, plan)
 	if err != nil {
 		return report, err

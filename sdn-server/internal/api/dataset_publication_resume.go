@@ -231,6 +231,21 @@ func (r *publicationRuns) unmark(req DatasetPublicationRequest) {
 	}
 }
 
+// unmarkLane removes every pending mark of a retracted lane.
+func (r *publicationRuns) unmarkLane(lane storage.DatasetPublicationLane) {
+	if r == nil || r.marks == "" {
+		return
+	}
+	schema := normalizeDatasetPublicationSchema(lane.SchemaName)
+	provider := strings.TrimSpace(lane.ProviderID)
+	source := strings.TrimSpace(lane.SourceName)
+	for _, m := range r.readPublicationMarks() {
+		if m.req.Schema == schema && m.req.ProviderID == provider && m.req.SourceName == source {
+			r.unmark(m.req)
+		}
+	}
+}
+
 // refuseForRestart is the error of a new publication refused at now because
 // the node is stopping or restarting for an update (cause), after leaving a
 // mark for it.
@@ -420,6 +435,11 @@ func (s *ConcreteDatasetPublicationService) orderMarks(marks []publicationMark) 
 //   - On every lane: m is older than publicationMarkMaxAge.
 func (s *ConcreteDatasetPublicationService) outdatedMark(ctx context.Context, m publicationMark) (reason string, superseded bool, err error) {
 	lane := storage.DatasetPublicationLane{SchemaName: m.req.Schema, ProviderID: m.req.ProviderID, SourceName: m.req.SourceName}
+	if at, retracted, err := s.store.DatasetPublicationLaneRetractedAt(lane); err != nil {
+		return "", false, err
+	} else if retracted {
+		return fmt.Sprintf("the lane was retracted at %s", at.Format(time.RFC3339Nano)), true, nil
+	}
 	var batch string
 	var at time.Time
 	var ok bool
