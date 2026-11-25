@@ -1207,9 +1207,9 @@ func writeFlatBufferRecordStreamWithContentType(w http.ResponseWriter, schema st
 
 func decodeOMM(data []byte) (*OMM.OMM, error) {
 	switch {
-	case OMM.SizePrefixedOMMBufferHasIdentifier(data):
+	case len(data) >= frameIdentifierOffset+frameIdentifierLength && OMM.SizePrefixedOMMBufferHasIdentifier(data):
 		return OMM.GetSizePrefixedRootAsOMM(data, 0), nil
-	case OMM.OMMBufferHasIdentifier(data):
+	case len(data) >= framePrefixLength+frameIdentifierLength && OMM.OMMBufferHasIdentifier(data):
 		return OMM.GetRootAsOMM(data, 0), nil
 	default:
 		return nil, fmt.Errorf("invalid OMM buffer")
@@ -1218,9 +1218,9 @@ func decodeOMM(data []byte) (*OMM.OMM, error) {
 
 func decodeCAT(data []byte) (*CAT.CAT, error) {
 	switch {
-	case CAT.SizePrefixedCATBufferHasIdentifier(data):
+	case len(data) >= frameIdentifierOffset+frameIdentifierLength && CAT.SizePrefixedCATBufferHasIdentifier(data):
 		return CAT.GetSizePrefixedRootAsCAT(data, 0), nil
-	case CAT.CATBufferHasIdentifier(data):
+	case len(data) >= framePrefixLength+frameIdentifierLength && CAT.CATBufferHasIdentifier(data):
 		return CAT.GetRootAsCAT(data, 0), nil
 	default:
 		return nil, fmt.Errorf("invalid CAT buffer")
