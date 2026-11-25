@@ -119,3 +119,58 @@ func TestOrdinaryPublicationFlatBufferIndex(t *testing.T) {
 		t.Fatal("released index lookup lost", err)
 	}
 }
+
+func TestDatasetManifestVerifiesWithDifferentPublicationStateSchemaHash(t *testing.T) {
+	root := t.TempDir()
+	store := &FlatSQLStore{basePath: filepath.Join(root, "store")}
+	dir := filepath.Join(store.DatasetPublicationOutputDir(), datasetPublicationPathComponent("OMM.fbs"))
+	record := sds.NewOMMBuilder().WithObjectName("mixed-version-peer").Build()
+	export, err := exportOrdinaryDatasetRecords(dir, IndexedRecordQuery{SchemaName: "OMM.fbs", ProviderID: "synthetic", SourceName: "source"}, []DatasetExportRecord{{Data: record, SourceTags: SourceTags{ProviderID: "synthetic", SourceName: "source"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := crypto.UnmarshalEd25519PublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := peer.IDFromPublicKey(publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherHash := strings.Repeat("a", 64)
+	if otherHash == publicationstate.SchemaSHA256() {
+		otherHash = strings.Repeat("b", 64)
+	}
+	signed, err := BuildSignedDatasetPublicationManifest(t.TempDir(), DatasetPublicationManifestOptions{
+		Export:          export,
+		DatasetID:       "synthetic",
+		UpdateID:        "mixed-version",
+		ProviderPeerID:  id.String(),
+		SigningKey:      key,
+		IndexSchemaHash: otherHash,
+		PublishedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, _, err := parseAndVerifyDatasetManifest(signed.Bytes, publicKey)
+	if err != nil {
+		t.Fatalf("manifest signed with a different PublicationState.fbs hash must verify: %v", err)
+	}
+	if got := shardSchemaHash(manifest, "QUERY_INDEX"); got != otherHash {
+		t.Fatalf("verified manifest index schema hash = %q, want %q", got, otherHash)
+	}
+	tampered := append([]byte(nil), signed.Bytes...)
+	idx := bytes.Index(tampered, []byte(otherHash))
+	if idx < 0 {
+		t.Fatal("signed manifest bytes do not contain the signed index schema hash")
+	}
+	tampered[idx] = 'c'
+	if _, _, err := parseAndVerifyDatasetManifest(tampered, publicKey); err == nil {
+		t.Fatal("tampering with the signed index schema hash must fail verification")
+	}
+}
