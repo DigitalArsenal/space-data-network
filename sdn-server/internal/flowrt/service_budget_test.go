@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 	"testing"
 	"time"
@@ -124,5 +125,136 @@ func TestDirectDispatchCancellation(t *testing.T) {
 	v, err := mod.Execute("completed")
 	if err != nil || wasmrt.ToInt32(v[0]) != 0 {
 		t.Fatalf("canceled call completed: %v %v", v, err)
+	}
+}
+
+// buildTriggerTestWasm constructs a minimal valid WASM module exposing the
+// exports FireTrigger uses: memory, malloc, enqueue_trigger_frame, drain_linked
+// (either an infinite loop to test async interruption, or an immediate return
+// 0), and get_ready_node_index (returns -1 / InvalidIndex).
+func buildTriggerTestWasm(loopDrain bool) []byte {
+	sec := func(id byte, payload []byte) []byte {
+		out := []byte{id}
+		out = appendULEB(out, uint32(len(payload)))
+		return append(out, payload...)
+	}
+	str := func(s string) []byte {
+		out := appendULEB(nil, uint32(len(s)))
+		return append(out, s...)
+	}
+	// Types:
+	// 0: (i32) -> (i32)       malloc, drain_linked
+	// 1: (i32, i32) -> (i32)  enqueue_trigger_frame
+	// 2: () -> (i32)          get_ready_node_index
+	types := []byte{
+		3,
+		0x60, 1, 0x7f, 1, 0x7f,
+		0x60, 2, 0x7f, 0x7f, 1, 0x7f,
+		0x60, 0, 1, 0x7f,
+	}
+	funcs := []byte{4, 0, 1, 0, 2}
+	mem := []byte{1, 0x00, 1}
+	var exports []byte
+	exports = append(exports, 5)
+	addExp := func(name string, kind byte, idx byte) {
+		exports = append(exports, str(name)...)
+		exports = append(exports, kind, idx)
+	}
+	addExp("memory", 0x02, 0)
+	addExp("malloc", 0x00, 0)
+	addExp(runtimeExportEnqueueTriggerFrame, 0x00, 1)
+	addExp(runtimeExportDrainLinked, 0x00, 2)
+	addExp(runtimeExportReadyNode, 0x00, 3)
+
+	// Function bodies:
+	// 0 (malloc): return 1024 (i32.const 1024 = 0x41 0x80 0x08)
+	bodyMalloc := []byte{0, 0x41, 0x80, 0x08, 0x0b}
+	// 1 (enqueue_trigger_frame): return 0
+	bodyEnqueue := []byte{0, 0x41, 0x00, 0x0b}
+	// 2 (drain_linked): infinite loop if loopDrain, else return 0
+	bodyDrain := []byte{0, 0x41, 0x00, 0x0b}
+	if loopDrain {
+		bodyDrain = []byte{0, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x41, 0x00, 0x0b}
+	}
+	// 3 (get_ready_node_index): return -1 (0x7f signed LEB128)
+	bodyReady := []byte{0, 0x41, 0x7f, 0x0b}
+
+	var code []byte
+	code = append(code, 4)
+	for _, b := range [][]byte{bodyMalloc, bodyEnqueue, bodyDrain, bodyReady} {
+		code = appendULEB(code, uint32(len(b)))
+		code = append(code, b...)
+	}
+
+	var wasm []byte
+	wasm = append(wasm, 0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00)
+	wasm = append(wasm, sec(1, types)...)
+	wasm = append(wasm, sec(3, funcs)...)
+	wasm = append(wasm, sec(5, mem)...)
+	wasm = append(wasm, sec(7, exports)...)
+	wasm = append(wasm, sec(10, code)...)
+	return wasm
+}
+
+func appendULEB(dst []byte, v uint32) []byte {
+	for {
+		b := byte(v & 0x7f)
+		v >>= 7
+		if v != 0 {
+			b |= 0x80
+		}
+		dst = append(dst, b)
+		if v == 0 {
+			return dst
+		}
+	}
+}
+
+func TestFireTriggerDiscardsInterruptedInstance(t *testing.T) {
+	// Interrupted run: even with releaseAfterRun=false, FireTrigger must discard
+	// the interrupted WASM instance so the next run loads a fresh one instead of
+	// reusing torn linear-memory/guest state.
+	loopMod, err := wasmrt.NewModule(buildTriggerTestWasm(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sf := &ServiceFlow{
+		programID: "test.cancel-discard",
+		triggers:  []serviceTrigger{{TriggerID: "tick", Index: 0, PortID: "tick"}},
+		runBytes:  []byte{0x00, 0x61, 0x73, 0x6d},
+		inst: &flowInstance{
+			rt:     &FlowRuntime{mod: loopMod, hasDrainLinked: true},
+			bridge: modulert.NewHostBridge(nil, nil),
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if _, err := sf.FireTrigger(ctx, "tick"); err == nil {
+		t.Fatal("expected cancelled FireTrigger to return an error")
+	}
+	if sf.inst != nil {
+		t.Fatal("interrupted FireTrigger retained its WASM instance; expected it to be discarded")
+	}
+
+	// Clean run: with releaseAfterRun=false, a healthy drain keeps its instance.
+	cleanMod, err := wasmrt.NewModule(buildTriggerTestWasm(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanMod.Release()
+	sfClean := &ServiceFlow{
+		programID: "test.clean-retain",
+		triggers:  []serviceTrigger{{TriggerID: "tick", Index: 0, PortID: "tick"}},
+		runBytes:  []byte{0x00, 0x61, 0x73, 0x6d},
+		inst: &flowInstance{
+			rt:     &FlowRuntime{mod: cleanMod, hasDrainLinked: true},
+			bridge: modulert.NewHostBridge(nil, nil),
+		},
+	}
+	if _, err := sfClean.FireTrigger(context.Background(), "tick"); err != nil {
+		t.Fatalf("clean FireTrigger failed: %v", err)
+	}
+	if sfClean.inst == nil {
+		t.Fatal("clean FireTrigger discarded its WASM instance when releaseAfterRun=false")
 	}
 }

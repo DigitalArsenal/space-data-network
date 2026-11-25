@@ -388,9 +388,9 @@ func TestPublicationManualRunCancelByIDRealDaemons(t *testing.T) {
 	out, err, _ := appsCLI(t, d, "apps", "cancel", gpFlowAppID, gpFlowTrigger)
 	t.Logf("apps cancel (%v):\n%s", err, out)
 	if err != nil {
-		t.Fatalf("apps cancel failed: %v", err)
+		t.Fatalf("apps cancel failed: %v\ndaemon log tail:\n%s", err, tailString(readFileString(d.logPath), 80))
 	}
 	if end := awaitManualRunEnd(t, d, 3, time.Minute); !strings.Contains(end, "cancelled by the operator") {
-		t.Fatalf("the third run (%s) after apps cancel: status=%s", third, end)
+		t.Fatalf("the third run (%s) after apps cancel: status=%s\ndaemon log tail:\n%s", third, end, tailString(readFileString(d.logPath), 80))
 	}
 }

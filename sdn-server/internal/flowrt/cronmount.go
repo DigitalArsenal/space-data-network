@@ -631,7 +631,7 @@ func (sf *ServiceFlow) executionContext(ctx context.Context) (context.Context, c
 
 // FireTrigger runs one named timer trigger to completion (also the direct
 // entry point for tests and the admin surface).
-func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byte, error) {
+func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) (out []byte, retErr error) {
 	ctx, cancel := sf.executionContext(ctx)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -661,14 +661,32 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 		}
 		sf.inst = inst
 	}
-	if sf.releaseAfterRun {
-		defer func() {
-			if sf.inst != nil {
-				sf.inst.rt.Release()
-				sf.inst = nil
+	completed := false
+	defer func() {
+		if sf.inst == nil {
+			return
+		}
+		// An interrupted, errored, or panicked drain may leave WasmEdge linear
+		// memory, guest stack pointer, or in-flight node state torn; discard the
+		// instance so the next run loads a fresh one rather than returning an
+		// empty "ok" drain in milliseconds.
+		abnormal := !completed || retErr != nil || ctx.Err() != nil
+		if sf.releaseAfterRun || (abnormal && len(sf.runBytes) > 0) {
+			if abnormal && !sf.releaseAfterRun {
+				log.Warnf("Flow service %q: trigger %q ended abnormally (%v) — discarding WASM instance so the next run starts clean", sf.programID, triggerID, retErr)
 			}
-		}()
-	}
+			sf.inst.rt.Release()
+			sf.inst = nil
+			return
+		}
+		if abnormal {
+			sf.inst.rt.ResetState()
+			return
+		}
+		if queued, reset := discardIngressResidue(sf.inst.rt, trigger.Index); reset {
+			log.Warnf("Flow service %q: trigger %q left %d unconsumed ingress frame(s) — resetting instance state", sf.programID, triggerID, queued)
+		}
+	}()
 	rt := sf.inst.rt
 	// A host capability records here what failed that the flow cannot
 	// report itself (the node's own dataset publication refused or cut).
@@ -754,6 +772,7 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 		"trigger": triggerID,
 		"results": egressSummary(frames),
 	})
+	completed = true
 	return summary, nil
 }
 
