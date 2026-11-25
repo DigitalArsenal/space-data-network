@@ -27,11 +27,25 @@ jobs:
   publish:
     name: Build & Publish
     runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: read
       id-token: write  # Required for npm provenance
+    env:
+      WASMEDGE_VERSION: '0.16.4'
 
     steps:
+      - name: Prepare the release container
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
+            ca-certificates curl gnupg git xz-utils build-essential zlib1g-dev libtinfo-dev libzstd-dev
+          git config --global --add safe.directory '*'
+
       - uses: actions/checkout@v4
         # No submodules: build:package compiles sdn-js/src only, and the
         # private SpaceAware-UI submodule fails an unauthenticated recursive
@@ -72,6 +86,37 @@ jobs:
             echo "${name}@${version} is not on npm yet; publishing."
           fi
 
+      - name: Set up Go
+        if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sdn-server/go.mod
+          cache-dependency-path: sdn-server/go.sum
+
+      - name: Restore patched static WasmEdge prefix
+        id: wasmedge-cache
+        if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
+          key: wasmedge-static-${{ env.WASMEDGE_VERSION }}-linux-amd64-focal-llvm16-${{ hashFiles('scripts/build-static-wasmedge.sh', 'scripts/wasmedge-static-env.sh') }}
+
+      - name: Build patched static WasmEdge prefix on cache miss
+        if: ${{ (steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)) && steps.wasmedge-cache.outputs.cache-hit != 'true' }}
+        env:
+          CMAKE_VERSION: '3.31.6'
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-16 main" > /etc/apt/sources.list.d/llvm.list
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/trusted.gpg.d/llvm.gpg
+          apt-get -o Acquire::Retries=5 update -qq
+          apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends \
+            ninja-build clang-16 llvm-16-dev liblld-16-dev libpolly-16-dev
+          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" | tar -xz -C /opt
+          export PATH="/opt/cmake-${CMAKE_VERSION}/bin:$PATH"
+          chmod +x scripts/*.sh
+          ./scripts/ci-local.sh prefix-build
+
       - name: Install dependencies
         if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         working-directory: sdn-js
@@ -81,12 +126,19 @@ jobs:
       # neither of which is tied to a green CI run on the published commit —
       # prepublishOnly is only `check:versions && build:package`. So the publish
       # lane verified the package built, never that it worked. ci.yml runs this
-      # same suite on pushes to main; running it here is what makes the ARTIFACT
-      # gated rather than the branch.
+      # same suite with Go + patched WasmEdge so the server-schema and libp2p
+      # interop suites execute against the real node handler.
       - name: Test
         if: ${{ steps.published.outputs.already == 'false' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         working-directory: sdn-js
-        run: npm test
+        env:
+          WASMEDGE_DIR: ${{ github.workspace }}/.sdn-wasmedge-static/prefix
+          SDN_WASM_REQUIRE_PATCHED: '1'
+          SDN_REQUIRE_GO_INTEROP: '1'
+        run: |
+          chmod +x ../scripts/*.sh
+          npm run build:core
+          node scripts/test-with-standards.mjs
 
       # sdn-js ran two incompatible libp2p majors once, bridged by hand-written
       # shims in src/helia.ts. The split is closed and the check now asserts one

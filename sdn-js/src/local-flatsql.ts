@@ -48,7 +48,6 @@ export interface LocalFlatSqlStoreOptions {
   schemas: LocalFlatSqlSchema[];
   engine?: LocalFlatSqlEngineOptions | null;
   persistenceKey?: string | null;
-  desktopPersistenceBaseUrl?: string | null;
   fetch?: FetchLike | null;
   persistenceStore?: LocalFlatSqlPersistenceStore | null;
   queryProfiles?: EngineEpochQueryProfilesConfig | null;
@@ -60,7 +59,6 @@ export interface ClearLocalFlatSqlStoreOptions {
   standardIds: string[];
   engine?: LocalFlatSqlEngineOptions | null;
   schemas?: Pick<LocalFlatSqlSchema, 'standardId' | 'tableName'>[];
-  desktopPersistenceBaseUrl?: string | null;
   fetch?: FetchLike | null;
   persistenceStore?: LocalFlatSqlPersistenceStore | null;
 }
@@ -750,69 +748,14 @@ function matchesOptional(value: string | null | undefined, queryValue: string | 
 }
 
 export function createDefaultLocalFlatSqlPersistenceStore(
-  options: Pick<LocalFlatSqlStoreOptions, 'desktopPersistenceBaseUrl' | 'fetch' | 'persistenceStore'> = {},
+  options: Pick<LocalFlatSqlStoreOptions, 'persistenceStore'> = {},
 ): LocalFlatSqlPersistenceStore {
   return createLocalFlatSqlPersistenceStore(options);
 }
 
-function createLocalFlatSqlPersistenceStore(options: Pick<LocalFlatSqlStoreOptions, 'desktopPersistenceBaseUrl' | 'fetch' | 'persistenceStore'>): LocalFlatSqlPersistenceStore {
+function createLocalFlatSqlPersistenceStore(options: Pick<LocalFlatSqlStoreOptions, 'persistenceStore'>): LocalFlatSqlPersistenceStore {
   if (options.persistenceStore) return options.persistenceStore;
-  const desktopBaseUrl = options.desktopPersistenceBaseUrl?.trim();
-  const fetchLike = options.fetch ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null);
-  if (desktopBaseUrl && fetchLike) {
-    return new DesktopFlatSqlPersistenceStore(desktopBaseUrl, fetchLike);
-  }
   return new IndexedDbFlatSqlPersistenceStore();
-}
-
-class DesktopFlatSqlPersistenceStore implements LocalFlatSqlPersistenceStore {
-  readonly available = true;
-  private readonly endpoint: string;
-
-  constructor(baseUrl: string, private readonly fetchLike: FetchLike) {
-    this.endpoint = desktopFlatSqlPersistenceEndpoint(baseUrl);
-  }
-
-  async readBytes(key: string): Promise<Uint8Array | null> {
-    const response = await this.fetchLike(this.urlFor(key), { method: 'GET' });
-    if (response.status === 404) return null;
-    if (!response.ok) return null;
-    return new Uint8Array(await response.arrayBuffer());
-  }
-
-  async writeBytes(key: string, bytes: Uint8Array): Promise<void> {
-    const response = await this.fetchLike(this.urlFor(key), {
-      method: 'PUT',
-      headers: { 'content-type': 'application/octet-stream' },
-      body: bytes.slice(),
-    });
-    if (!response.ok) throw new Error(`FlatSQL desktop persistence write failed with HTTP ${response.status}`);
-  }
-
-  async readJson(key: string): Promise<unknown> {
-    const bytes = await this.readBytes(key);
-    if (!bytes) return null;
-    try {
-      return JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-      return null;
-    }
-  }
-
-  async writeJson(key: string, value: unknown): Promise<void> {
-    await this.writeBytes(key, new TextEncoder().encode(JSON.stringify(value)));
-  }
-
-  async deleteKey(key: string): Promise<void> {
-    const response = await this.fetchLike(this.urlFor(key), { method: 'DELETE' });
-    if (!response.ok && response.status !== 404) {
-      throw new Error(`FlatSQL desktop persistence delete failed with HTTP ${response.status}`);
-    }
-  }
-
-  private urlFor(key: string): string {
-    return `${this.endpoint}/${encodeURIComponent(key)}`;
-  }
 }
 
 class IndexedDbFlatSqlPersistenceStore implements LocalFlatSqlPersistenceStore {
@@ -895,11 +838,6 @@ class IndexedDbFlatSqlPersistenceStore implements LocalFlatSqlPersistenceStore {
       };
     });
   }
-}
-
-function desktopFlatSqlPersistenceEndpoint(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, '');
-  return trimmed.endsWith('/api/flatsql/persistence') ? trimmed : `${trimmed}/api/flatsql/persistence`;
 }
 
 async function readPersistedPinLedgerEntries(store: LocalFlatSqlPersistenceStore, key: string): Promise<Map<string, LocalFlatSqlPinLedgerEntry>> {

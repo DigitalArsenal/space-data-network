@@ -25,8 +25,11 @@ func TestStandardsEndpointServesTheEmbeddedRegistry(t *testing.T) {
 	}
 	var omm *standardRow
 	for i := range body.Standards {
-		if body.Standards[i].Code == "OMM" {
+		switch body.Standards[i].Code {
+		case "OMM":
 			omm = &body.Standards[i]
+		case "FCK", "FMB", "FSG":
+			t.Fatalf("internal engine frame type %s must not appear in /api/v1/standards", body.Standards[i].Code)
 		}
 	}
 	if omm == nil || omm.Schema != "OMM.fbs" || omm.Name == "" {
