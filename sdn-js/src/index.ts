@@ -604,3 +604,11 @@ export type {
   ComputeInvokeOptions,
   ComputeInvokeResult,
 } from './compute-offload';
+export {
+  IDENTITY_SEED_LENGTH,
+  loadOrCreateIdentity,
+} from './node-identity';
+export type {
+  IdentityStore,
+  LoadOrCreateIdentityOptions,
+} from './node-identity';

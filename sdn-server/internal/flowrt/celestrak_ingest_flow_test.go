@@ -473,7 +473,7 @@ func TestCelesTrakIngestRespectsTheDebounceGate(t *testing.T) {
 	defer service.Close()
 
 	// Gate closed: the pull must not reach the publisher at all.
-	service.SetRetrievalGate(func() (bool, string) { return false, "inside the 3h debounce window" })
+	service.SetRetrievalGate(func() (bool, string, RetrievalOutcome) { return false, "inside the 3h debounce window", nil })
 	summary, err := service.InvokeCron(t.Context(), "timer-gp", nil)
 	if err != nil {
 		t.Fatalf("InvokeCron (gated): %v", err)
@@ -495,7 +495,7 @@ func TestCelesTrakIngestRespectsTheDebounceGate(t *testing.T) {
 	}
 
 	// Gate open: normal operation is unaffected.
-	service.SetRetrievalGate(func() (bool, string) { return true, "" })
+	service.SetRetrievalGate(func() (bool, string, RetrievalOutcome) { return true, "", nil })
 	if _, err := service.InvokeCron(t.Context(), "timer-gp", nil); err != nil {
 		t.Fatalf("InvokeCron (open): %v", err)
 	}

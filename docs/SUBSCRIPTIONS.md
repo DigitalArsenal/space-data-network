@@ -72,7 +72,10 @@ the producer's statement), why it is stopped (`stopped`), whether it is
 connected, records and bytes received, records
 stored and removed, the batch held as the producer's current one, the
 producer's stated current batch and its records, the lag (records of that
-batch not held yet) and the last error.
+batch the store does not hold, read from the store at each listing, so
+records removed since the batch was held count until they are held again)
+and the last error. "received" and "stored" count what the stream delivered
+since the lane started; they are not the lane's size.
 
 ## The first read
 
@@ -171,6 +174,27 @@ time. The 5 minutes count from the lane's start: a catch-up runs when they
 end, whatever else ran it in between, so a lane whose stream never connects
 imports its waiting publication 5 minutes after it starts.
 
+A subscribed lane's current batch is its producer's: the batch the stream
+holds as the producer states it, or, on a `--publications only` lane, the
+publication imported last, whose retention pass runs as it lands. The
+node's own publication ledger never decides it: that ledger holds only the
+publications the node made itself and those a 1.1.9 node imported, and
+their shard files can outlive their records. The retention pass at each
+start leaves subscribed lanes alone, and a publication imported on a lane
+the stream follows leaves its retention to the stream. Up to 1.1.15 that
+pass judged a subscribed lane from the ledger, kept an old batch whose
+files were still on disk, and removed the current batch's records at every
+start.
+
+The producer states a batch while it may still be storing it: records
+carried over from its previous batch are tagged to the new batch in place
+and never come on the stream, so the stream is quiet and its statement
+counts the batch as it was then. A list of the batch longer than the
+statement allows (its count and one list page more) asks the producer's
+statement again; when it states the same batch with more records, the list
+goes on under the new count. Otherwise the list is refused (alert
+`follow_refused`).
+
 A failed hold of the stated batch (its list read, its records fetched) does
 not end the stream. The batch is asked for again under the stream's backoff:
 at least 30 s after the last ask, and after consecutive failures 1 s doubling
@@ -254,8 +278,16 @@ producer may ever run 1.1.9 again (a rollback): a 1.1.9 node imports every
 lane of a peer it trusts. A followed stream past these limits is refused
 busy and asked for again. Records fetched from a producer are taken only as
 that producer's own: a run that names another peer as origin or producer is
-refused, so a producer whose stored records name an earlier identity of it
-serves its stream but not its current batch.
+refused, so a producer whose lane tags name an earlier identity of it serves
+its stream but not its current batch. On a followed page and a fetch by
+content address the producer names as each record's origin the producer its
+lane tag names, not the peer it first stored the record's bytes from: a
+node stores a record once per content address, so a record its own lane
+holds may have reached it first from another peer (from the follower
+itself, when it once followed or imported a lane of the follower). Up to
+1.1.15 it named that first peer, and the follower refused the whole batch
+over a few such records. Records the producer holds only in another
+producer's lane name that producer and are still refused.
 
 What a follower costs its producer: a lane's statement is answered from the
 producer's counters, never by reading the lane's records, so it costs the

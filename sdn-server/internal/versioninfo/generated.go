@@ -3,7 +3,7 @@
 package versioninfo
 
 const (
-	SuiteVersion              = "1.1.15"
+	SuiteVersion              = "1.1.16"
 	SpaceDataStandardsVersion = "1.294.1"
 	FlatSQLVersion            = "3.12.14"
 	HDWalletWasmVersion       = "2.1.3"
