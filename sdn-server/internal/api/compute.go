@@ -66,7 +66,7 @@ func (h *ComputeHandler) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "compute invoke requires POST with one $PIV FlatBuffer", 0)
 		return
 	}
-	if h.rl != nil && !h.rl.Allow(w, r) {
+	if h.rl != nil && !h.rl.AllowRead(w, r) {
 		return
 	}
 	if h == nil || h.service == nil {
@@ -189,10 +189,8 @@ func (h *ComputeHandler) handleAdminEntitlements(w http.ResponseWriter, r *http.
 		WriteErrorFrame(w, http.StatusMethodNotAllowed, "method_not_allowed", "entitlement upsert requires POST with one $ENT FlatBuffer", 0)
 		return
 	}
-	if ah := h.authHandler(); ah != nil {
-		if !ah.RequireTrust(w, r, peers.Admin) {
-			return
-		}
+	if !h.authHandler().RequireTrust(w, r, peers.Admin) {
+		return
 	}
 	if h == nil || h.service == nil {
 		WriteErrorFrame(w, http.StatusServiceUnavailable, "entitlements_unavailable", "entitlement service unavailable on this node", 0)

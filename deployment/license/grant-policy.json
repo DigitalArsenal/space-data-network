@@ -11,7 +11,9 @@
   "compute_offload": {
     "policy": "subscription",
     "required_plans": ["analysis", "ai", "spaceedge", "pro", "enterprise"],
-    "fallback_signal": "browser-local"
+    "fallback_signal": "browser-local",
+    "denied_modules": ["licensing", "ailog", "pmm"],
+    "allowed_hydration_schemas": ["THP.fbs", "CDM.fbs", "SIT.fbs", "SWS.fbs", "RBF.fbs", "RDE.fbs"]
   },
 
   "thp_tiers": {

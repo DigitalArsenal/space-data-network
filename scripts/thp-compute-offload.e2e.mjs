@@ -409,7 +409,7 @@ function stagePluginRoot(pluginRoot, modulesDir) {
       required_scope: 'orbpro:base',
       plain_path: s.out,
       content_type: 'application/wasm',
-      grant_policy: 'open',
+      grant_policy: s.id === 'com.digitalarsenal.analysis.radiation-effects' ? 'allowlist' : 'open',
     });
   }
 
@@ -490,6 +490,7 @@ async function main() {
     const thpPublisher = await sdn.deriveIdentity(crypto.randomBytes(64), 0);
     const freeUser = await sdn.deriveIdentity(crypto.randomBytes(64), 1);
     const paidUser = await sdn.deriveIdentity(crypto.randomBytes(64), 2);
+    const adminUser = await sdn.deriveIdentity(crypto.randomBytes(64), 3);
 
     const { dir: modulesDir } = resolveModulesDir(tmpRoot);
     const daemonBin = resolveOrBuildDaemonBinary(tmpRoot);
@@ -515,6 +516,7 @@ async function main() {
 
     const freePubHex = Buffer.from(freeUser.signingKey.publicKey).toString('hex');
     const paidPubHex = Buffer.from(paidUser.signingKey.publicKey).toString('hex');
+    const adminPubHex = Buffer.from(adminUser.signingKey.publicKey).toString('hex');
     const yaml = [
       'mode: full',
       'network:',
@@ -536,11 +538,15 @@ async function main() {
       `  listen_addr: "127.0.0.1:${adminPort}"`,
       '  require_auth: true',
       '  tls_mode: disabled',
-      '  local_console: true',
+      '  local_console: false',
       '  remote_requires_sealed: false',
       `  ipfs_api_url: "http://127.0.0.1:${kuboApiPort}"`,
       `  ipfs_gateway_url: "http://127.0.0.1:${kuboGwPort}"`,
       'users:',
+      `  - xpub: ${JSON.stringify(adminUser.xpub)}`,
+      `    signing_pubkey_hex: ${JSON.stringify(adminPubHex)}`,
+      '    trust_level: admin',
+      '    name: "M6 Admin User"',
       `  - xpub: ${JSON.stringify(freeUser.xpub)}`,
       `    signing_pubkey_hex: ${JSON.stringify(freePubHex)}`,
       '    trust_level: standard',
@@ -654,19 +660,32 @@ async function main() {
       'rf-jammer lane must include analyst WHAT_IF_TEMPLATE',
     );
 
+    const adminCookie = await signInWalletSession(baseUrl, adminUser);
+
     const publishRes = await fetch(
       `${baseUrl}/api/v1/data/publish/batch/THP.fbs?provider_id=sdn-default-thp&source_name=thp-defaults&batch_id=m6-e2e-1`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          Cookie: adminCookie,
+          Origin: baseUrl,
+        },
         body: sdn.encodeSizePrefixedFrames(thpLanes.map((l) => l.bytes)),
       },
     );
-    assert.ok(publishRes.ok, `Publish $THP batch failed (${publishRes.status})`);
+    if (!publishRes.ok) {
+      const errBody = await publishRes.text();
+      assert.fail(`Publish $THP batch failed (${publishRes.status}): ${errBody}`);
+    }
 
     const scanRes = await fetch(`${baseUrl}/api/v1/data/scan`, {
       method: 'POST',
-      headers: { 'Content-Type': sdn.FLATBUFFER_STREAM_CONTENT_TYPE },
+      headers: {
+        'Content-Type': sdn.FLATBUFFER_STREAM_CONTENT_TYPE,
+        Cookie: adminCookie,
+        Origin: baseUrl,
+      },
       body: encodeSizePrefixedQrpScanRequest('THP', 'sdn-default-thp', 'thp-defaults', 100),
     });
     assert.equal(scanRes.status, 200, `Scan $THP records failed (${scanRes.status})`);
@@ -868,9 +887,33 @@ async function main() {
       status: entitlementLifecycleStatus.Active,
       statusText: 'active',
     });
-    const entRes = await fetch(`${baseUrl}/api/v1/admin/entitlements`, {
+
+    // Adversarial check: unauthenticated & non-admin $ENT upsert must fail closed
+    const unauthEntRes = await fetch(`${baseUrl}/api/v1/admin/entitlements`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-flatbuffers' },
+      body: entBytes,
+    });
+    assert.equal(unauthEntRes.status, 401, `Unauthenticated POST /api/v1/admin/entitlements must fail closed with 401 (got ${unauthEntRes.status})`);
+
+    const standardEntRes = await fetch(`${baseUrl}/api/v1/admin/entitlements`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-flatbuffers',
+        Cookie: freeCookie,
+        Origin: baseUrl,
+      },
+      body: entBytes,
+    });
+    assert.equal(standardEntRes.status, 403, `Non-admin POST /api/v1/admin/entitlements must fail closed with 403 (got ${standardEntRes.status})`);
+
+    const entRes = await fetch(`${baseUrl}/api/v1/admin/entitlements`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-flatbuffers',
+        Cookie: adminCookie,
+        Origin: baseUrl,
+      },
       body: entBytes,
     });
     assert.equal(entRes.status, 200, `POST /api/v1/admin/entitlements failed (${entRes.status})`);
@@ -1066,6 +1109,136 @@ async function main() {
     }
     assertByteEqualFrameArrays('libp2p compute-invoke ($TMX)', paidP2pFrames, localTmxFrames);
     console.log('PASS [4/4] libp2p /space-data-network/compute-invoke/1.0.0 Stream (fail-closed + byte parity)');
+
+    // =========================================================================
+    // [5/5] Adversarial Policy Enforcement: Module ACL, Hydration Deny, $THP Tiers
+    // =========================================================================
+    // 5a. "analysis" subscriber cannot invoke internal "licensing" or "allowlist" modules (HTTP 403)
+    for (const deniedModuleId of [
+      'licensing',
+      'com.orbpro.fastest-path',
+      'com.orbpro.rf-link-budget',
+      'com.digitalarsenal.analysis.radiation-effects',
+    ]) {
+      await assert.rejects(
+        () =>
+          sdn.invokeRemoteCompute({
+            baseUrl,
+            moduleId: deniedModuleId,
+            methodId: 'assess_threat_matrix',
+            inputs: assessInputs,
+            headers: { Cookie: paidCookie },
+          }),
+        (err) => {
+          assert.ok(err instanceof sdn.ComputeOffloadError, `Expected ComputeOffloadError for ${deniedModuleId}`);
+          assert.equal(err.status, 403, `${deniedModuleId} must fail closed with HTTP 403 (got ${err.status})`);
+          assert.equal(err.errorCode, 'module_access_denied', `${deniedModuleId} errorCode mismatch: ${err.errorCode}`);
+          return true;
+        },
+      );
+    }
+
+    // 5b. "analysis" subscriber cannot hydrate sensitive/internal FlatSQL schemas via TAB.SIZE == 0
+    for (const forbiddenSchema of ['ENT.fbs', 'ACL.fbs', 'PLK.fbs', 'KMF.fbs']) {
+      const badHydrateInputs = [
+        { portId: 'config', schemaName: 'ModuleConfig.fbs', fileIdentifier: 'MCFG', rootType: 'ModuleConfig', payload: tmxMcfgBytes },
+        { portId: 'grid', schemaName: 'SCR.fbs', fileIdentifier: '$SCR', rootType: 'SCR', payload: scrBytes },
+        { portId: 'request', schemaName: 'TMX.fbs', fileIdentifier: '$TMX', rootType: 'TMX', payload: tmxReqBytes },
+        { portId: 'threat_profile', schemaName: forbiddenSchema, payload: new Uint8Array(0) },
+      ];
+      await assert.rejects(
+        () =>
+          sdn.invokeRemoteCompute({
+            baseUrl,
+            moduleId: 'com.digitalarsenal.analysis.threat-matrix',
+            methodId: 'assess_threat_matrix',
+            inputs: badHydrateInputs,
+            headers: { Cookie: paidCookie },
+          }),
+        (err) => {
+          assert.ok(err instanceof sdn.ComputeOffloadError, `Expected ComputeOffloadError for ${forbiddenSchema}`);
+          assert.equal(err.status, 403, `${forbiddenSchema} hydration must fail closed with HTTP 403 (got ${err.status})`);
+          assert.equal(err.errorCode, 'hydration_denied', `${forbiddenSchema} errorCode mismatch: ${err.errorCode}`);
+          return true;
+        },
+      );
+    }
+
+    // 5c. $THP ACCESS_TIER = COMMERCIAL (rejected for unsubscribed caller, allowed for analysis)
+    //     and GOVERNMENT (rejected for analysis unless allowlisted).
+    const commercialThpLanes = await sdn.buildDefaultThreatProfileRecords({
+      timestamp: '2025-01-01T00:00:00Z',
+      signingPrivateKey: thpPublisher.signingKey.privateKey,
+      accessTierOverride: thpAccessTier.COMMERCIAL,
+    });
+    const commercialInputs = [
+      { portId: 'config', schemaName: 'ModuleConfig.fbs', fileIdentifier: 'MCFG', rootType: 'ModuleConfig', payload: tmxMcfgBytes },
+      { portId: 'grid', schemaName: 'SCR.fbs', fileIdentifier: '$SCR', rootType: 'SCR', payload: scrBytes },
+      { portId: 'request', schemaName: 'TMX.fbs', fileIdentifier: '$TMX', rootType: 'TMX', payload: tmxReqBytes },
+      ...commercialThpLanes.map((l) => ({
+        portId: 'threat_profile',
+        schemaName: 'THP.fbs',
+        fileIdentifier: '$THP',
+        rootType: 'THP',
+        payload: l.bytes,
+      })),
+      { portId: 'cdms', schemaName: 'CDM.fbs', fileIdentifier: '$CDM', rootType: 'CDM', payload: cdmBytes },
+      { portId: 'sites', schemaName: 'SIT.fbs', fileIdentifier: '$SIT', rootType: 'SIT', payload: siteBytes },
+      { portId: 'gateways', schemaName: 'SIT.fbs', fileIdentifier: '$SIT', rootType: 'SIT', payload: gatewayBytes },
+    ];
+
+    const freeCommercialRes = await sdn.invokeRemoteCompute({
+      baseUrl,
+      moduleId: 'com.digitalarsenal.analysis.threat-matrix',
+      methodId: 'assess_threat_matrix',
+      inputs: commercialInputs,
+      headers: { Cookie: freeCookie },
+    });
+    assert.equal(freeCommercialRes.ok, false, 'COMMERCIAL $THP must be rejected for unsubscribed caller');
+    assert.equal(freeCommercialRes.status, 402);
+    assert.equal(freeCommercialRes.errorCode, 'subscription_required');
+
+    const paidCommercialRes = await sdn.invokeRemoteCompute({
+      baseUrl,
+      moduleId: 'com.digitalarsenal.analysis.threat-matrix',
+      methodId: 'assess_threat_matrix',
+      inputs: commercialInputs,
+      headers: { Cookie: paidCookie },
+    });
+    assert.equal(paidCommercialRes.ok, true, 'COMMERCIAL $THP must be allowed for analysis subscriber');
+    assert.equal(paidCommercialRes.rawFrames.length, 3);
+
+    const govThpLanes = await sdn.buildDefaultThreatProfileRecords({
+      timestamp: '2025-01-01T00:00:00Z',
+      signingPrivateKey: thpPublisher.signingKey.privateKey,
+      accessTierOverride: thpAccessTier.GOVERNMENT,
+    });
+    const govInputs = [
+      { portId: 'config', schemaName: 'ModuleConfig.fbs', fileIdentifier: 'MCFG', rootType: 'ModuleConfig', payload: tmxMcfgBytes },
+      { portId: 'grid', schemaName: 'SCR.fbs', fileIdentifier: '$SCR', rootType: 'SCR', payload: scrBytes },
+      { portId: 'request', schemaName: 'TMX.fbs', fileIdentifier: '$TMX', rootType: 'TMX', payload: tmxReqBytes },
+      ...govThpLanes.map((l) => ({
+        portId: 'threat_profile',
+        schemaName: 'THP.fbs',
+        fileIdentifier: '$THP',
+        rootType: 'THP',
+        payload: l.bytes,
+      })),
+      { portId: 'cdms', schemaName: 'CDM.fbs', fileIdentifier: '$CDM', rootType: 'CDM', payload: cdmBytes },
+      { portId: 'sites', schemaName: 'SIT.fbs', fileIdentifier: '$SIT', rootType: 'SIT', payload: siteBytes },
+      { portId: 'gateways', schemaName: 'SIT.fbs', fileIdentifier: '$SIT', rootType: 'SIT', payload: gatewayBytes },
+    ];
+    const paidGovRes = await sdn.invokeRemoteCompute({
+      baseUrl,
+      moduleId: 'com.digitalarsenal.analysis.threat-matrix',
+      methodId: 'assess_threat_matrix',
+      inputs: govInputs,
+      headers: { Cookie: paidCookie },
+    });
+    assert.equal(paidGovRes.ok, false, 'GOVERNMENT $THP must be rejected for analysis subscriber');
+    assert.equal(paidGovRes.status, 402);
+    assert.match(paidGovRes.message ?? '', /GOVERNMENT tier requires restricted authorization/i);
+    console.log('PASS [5/5] Adversarial Policy Enforcement (module ACL, hydration deny, $THP COMMERCIAL/GOVERNMENT, $ENT auth)');
 
     console.log('PASS thp-compute-offload E2E');
   } finally {

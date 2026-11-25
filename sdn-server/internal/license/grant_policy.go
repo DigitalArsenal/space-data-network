@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 // Grant policy — the per-module entitlement rule the provider applies before it
@@ -58,11 +60,54 @@ const (
 	DefaultComputeFallbackSignal = "browser-local"
 )
 
+// ErrModuleAccessDenied indicates that the requested module is internal or
+// restricted by grant policy and may not be remotely invoked by the caller.
+var ErrModuleAccessDenied = errors.New("module access denied for remote compute offload")
+
 // ComputeOffloadPolicy configures subscription-gated remote WASM execution.
 type ComputeOffloadPolicy struct {
-	Policy         string   `json:"policy,omitempty"`
-	RequiredPlans  []string `json:"required_plans,omitempty"`
-	FallbackSignal string   `json:"fallback_signal,omitempty"`
+	Policy                  string   `json:"policy,omitempty"`
+	RequiredPlans           []string `json:"required_plans,omitempty"`
+	FallbackSignal          string   `json:"fallback_signal,omitempty"`
+	DeniedModules           []string `json:"denied_modules,omitempty"`
+	AllowedHydrationSchemas []string `json:"allowed_hydration_schemas,omitempty"`
+}
+
+var builtInDeniedComputeModules = map[string]struct{}{
+	"licensing": {},
+	"ailog":     {},
+	"pmm":       {},
+}
+
+// restrictedInternalSchemas cannot be hydrated by remote compute offload
+// under any configuration.
+var restrictedInternalSchemas = map[string]struct{}{
+	"ACL.fbs":  {},
+	"CLM.fbs":  {},
+	"CRD.fbs":  {},
+	"ENC.fbs":  {},
+	"ENT.fbs":  {},
+	"KMF.fbs":  {},
+	"KRF.fbs":  {},
+	"LCH.fbs":  {},
+	"LGR.fbs":  {},
+	"LPF.fbs":  {},
+	"LWK.fbs":  {},
+	"PGR.fbs":  {},
+	"PKB.fbs":  {},
+	"PLG.fbs":  {},
+	"PLHD.fbs": {},
+	"PLK.fbs":  {},
+	"PLOG.fbs": {},
+	"PUR.fbs":  {},
+	"REV.fbs":  {},
+	"RHD.fbs":  {},
+	"STF.fbs":  {},
+	"STR.fbs":  {},
+	"SUB.fbs":  {},
+	"TNR.fbs":  {},
+	"TRE.fbs":  {},
+	"USR.fbs":  {},
 }
 
 // GrantPolicyFileName is the operator-owned policy file, read from the plugin
@@ -260,6 +305,15 @@ func (c *GrantPolicyConfig) Validate() error {
 		default:
 			return fmt.Errorf("compute_offload.policy: unknown policy %q", c.ComputeOffload.Policy)
 		}
+		for i, schema := range c.ComputeOffload.AllowedHydrationSchemas {
+			canonical := sds.NormalizeSchemaFileName(schema)
+			if canonical == "" || sds.ValidateSchemaName(canonical) != nil {
+				return fmt.Errorf("compute_offload.allowed_hydration_schemas[%d]: invalid schema %q", i, schema)
+			}
+			if _, restricted := restrictedInternalSchemas[canonical]; restricted {
+				return fmt.Errorf("compute_offload.allowed_hydration_schemas[%d]: restricted internal schema %q cannot be exposed", i, canonical)
+			}
+		}
 	}
 	for tier, rawPolicy := range c.THPTiers {
 		if strings.TrimSpace(tier) == "" {
@@ -334,6 +388,93 @@ func (c *GrantPolicyConfig) ResolveComputeOffloadAccess(ent *Entitlement, now ti
 	default:
 		return false, fmt.Sprintf("unknown compute offload policy %q", policy)
 	}
+}
+
+// IsDeniedComputeModule reports whether moduleID is an internal/privileged
+// module excluded from remote compute offload.
+func (c *GrantPolicyConfig) IsDeniedComputeModule(moduleID string) bool {
+	trimmed := strings.TrimSpace(moduleID)
+	if trimmed == "" {
+		return true
+	}
+	if _, denied := builtInDeniedComputeModules[strings.ToLower(trimmed)]; denied {
+		return true
+	}
+	if c != nil && c.ComputeOffload != nil {
+		for _, pattern := range c.ComputeOffload.DeniedModules {
+			if matchModulePattern(pattern, trimmed) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ResolveComputeModuleAccess enforces BOTH plan-level compute offload
+// entitlement AND per-module grant-policy / allowed_xpubs authorization,
+// while excluding internal modules such as "licensing".
+func (c *GrantPolicyConfig) ResolveComputeModuleAccess(moduleID string, asset *PluginAsset, ent *Entitlement, now time.Time) (bool, string, error) {
+	trimmedID := strings.TrimSpace(moduleID)
+	if trimmedID == "" {
+		return false, "", fmt.Errorf("%w: compute module ID is required", ErrModuleAccessDenied)
+	}
+	if c.IsDeniedComputeModule(trimmedID) {
+		return false, "", fmt.Errorf("%w: module %q is internal and excluded from remote compute offload", ErrModuleAccessDenied, trimmedID)
+	}
+	if allowed, reason := c.ResolveComputeOffloadAccess(ent, now); !allowed {
+		return false, "", errors.New(reason)
+	}
+
+	catalogPolicy := ""
+	var allowedXpubs []string
+	if asset != nil {
+		catalogPolicy = asset.GrantPolicy
+		allowedXpubs = asset.AllowedXpubs
+	}
+	resolved := c.Resolve(trimmedID, catalogPolicy)
+	if IsOpenGrantPolicy(resolved.Policy) && len(allowedXpubs) > 0 {
+		resolved.Policy = GrantPolicyAllowlist
+	}
+
+	if resolved.Policy == GrantPolicyOpen {
+		return true, resolved.Source, nil
+	}
+
+	callerXPub := ""
+	if ent != nil {
+		callerXPub = strings.TrimSpace(ent.XPub)
+	}
+	if callerXPub != "" && resolved.Policy == GrantPolicyAllowlist {
+		for _, xpub := range allowedXpubs {
+			if strings.TrimSpace(xpub) == callerXPub {
+				return true, resolved.Source, nil
+			}
+		}
+	}
+	return false, "", fmt.Errorf("%w: module %q requires explicit entitlement under policy %q", ErrModuleAccessDenied, trimmedID, resolved.Policy)
+}
+
+// IsHydrationAllowedSchema reports whether schemaName is permitted for
+// store-backed TAB.SIZE == 0 input hydration during remote compute offload.
+func (c *GrantPolicyConfig) IsHydrationAllowedSchema(schemaName string) (string, bool) {
+	canonical := sds.NormalizeSchemaFileName(schemaName)
+	if canonical == "" || sds.ValidateSchemaName(canonical) != nil {
+		return "", false
+	}
+	if _, restricted := restrictedInternalSchemas[canonical]; restricted {
+		return canonical, false
+	}
+	if sds.IsPublicReadSchema(canonical) {
+		return canonical, true
+	}
+	if c != nil && c.ComputeOffload != nil {
+		for _, allowed := range c.ComputeOffload.AllowedHydrationSchemas {
+			if sds.NormalizeSchemaFileName(allowed) == canonical {
+				return canonical, true
+			}
+		}
+	}
+	return canonical, false
 }
 
 // ResolveTHPAccess enforces tier-based access control for $THP records based on

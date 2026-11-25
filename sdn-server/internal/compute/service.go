@@ -117,6 +117,7 @@ type Service struct {
 	validator    *sds.Validator
 	entitlements *license.EntitlementStore
 	grantPolicy  func() *license.GrantPolicyConfig
+	pluginAsset  func(id string) (*license.PluginAsset, bool)
 }
 
 // NewService constructs a generic compute offload service.
@@ -126,6 +127,7 @@ func NewService(
 	validator *sds.Validator,
 	entitlements *license.EntitlementStore,
 	grantPolicy func() *license.GrantPolicyConfig,
+	pluginAsset func(id string) (*license.PluginAsset, bool),
 ) *Service {
 	return &Service{
 		resolver:     resolver,
@@ -133,6 +135,7 @@ func NewService(
 		validator:    validator,
 		entitlements: entitlements,
 		grantPolicy:  grantPolicy,
+		pluginAsset:  pluginAsset,
 	}
 }
 
@@ -157,6 +160,36 @@ func (s *Service) Authorize(ent *license.Entitlement) *InvokeError {
 		HTTPStatus:     http.StatusPaymentRequired,
 		Code:           "subscription_required",
 		Message:        fmt.Sprintf("%s; fallback=%s", reason, fallback),
+		FallbackSignal: fallback,
+	}
+}
+
+// AuthorizeModule checks whether ent is permitted to remotely invoke moduleID
+// under grant-policy.json, excluding internal modules and enforcing allowlists.
+func (s *Service) AuthorizeModule(ent *license.Entitlement, moduleID string) *InvokeError {
+	policy := s.effectiveGrantPolicy()
+	var asset *license.PluginAsset
+	if s != nil && s.pluginAsset != nil {
+		if found, ok := s.pluginAsset(moduleID); ok {
+			asset = found
+		}
+	}
+	allowed, _, err := policy.ResolveComputeModuleAccess(moduleID, asset, ent, time.Now().UTC())
+	if allowed {
+		return nil
+	}
+	if errors.Is(err, license.ErrModuleAccessDenied) {
+		return &InvokeError{
+			HTTPStatus: http.StatusForbidden,
+			Code:       "module_access_denied",
+			Message:    err.Error(),
+		}
+	}
+	fallback := policy.ComputeFallbackSignal()
+	return &InvokeError{
+		HTTPStatus:     http.StatusPaymentRequired,
+		Code:           "subscription_required",
+		Message:        fmt.Sprintf("%v; fallback=%s", err, fallback),
 		FallbackSignal: fallback,
 	}
 }
@@ -308,6 +341,9 @@ func (s *Service) Invoke(
 
 	var mod *modulert.Module
 	if effectiveModuleID != "" {
+		if modErr := s.AuthorizeModule(ent, effectiveModuleID); modErr != nil {
+			return nil, modErr
+		}
 		var ok bool
 		mod, ok = s.resolver.GetModule(effectiveModuleID)
 		if !ok || mod == nil {
@@ -328,6 +364,10 @@ func (s *Service) Invoke(
 		}
 		effectiveModuleID = resolvedID
 		mod = resolvedMod
+	}
+
+	if modErr := s.AuthorizeModule(ent, mod.ID()); modErr != nil {
+		return nil, modErr
 	}
 
 	inputFrames, hydrateErr := s.materializeInputFrames(req, ent)
@@ -457,8 +497,16 @@ func (s *Service) materializeInputFrames(req *piv.PIVRequest, ent *license.Entit
 			continue
 		}
 
-		// Generic store-backed hydration when TAB.SIZE == 0 and SCHEMA_NAME is set.
+		// Policy-gated store-backed hydration when TAB.SIZE == 0 and SCHEMA_NAME is set.
 		if schemaName != "" {
+			canonicalSchema, allowed := s.effectiveGrantPolicy().IsHydrationAllowedSchema(schemaName)
+			if !allowed || (s.validator != nil && !s.validator.HasSchema(canonicalSchema)) {
+				return nil, &InvokeError{
+					HTTPStatus: http.StatusForbidden,
+					Code:       "hydration_denied",
+					Message:    fmt.Sprintf("store-backed hydration for schema %q is not permitted", schemaName),
+				}
+			}
 			if s.store == nil {
 				return nil, &InvokeError{
 					HTTPStatus: http.StatusServiceUnavailable,
@@ -467,14 +515,14 @@ func (s *Service) materializeInputFrames(req *piv.PIVRequest, ent *license.Entit
 				}
 			}
 			records, err := s.store.QueryRawRecords(storage.RawRecordQuery{
-				SchemaName: schemaName,
+				SchemaName: canonicalSchema,
 				Limit:      MaxHydrateRecords,
 			})
 			if err != nil {
 				return nil, &InvokeError{
 					HTTPStatus: http.StatusInternalServerError,
 					Code:       "store_query_failed",
-					Message:    fmt.Sprintf("hydrate %s inputs: %v", schemaName, err),
+					Message:    fmt.Sprintf("hydrate %s inputs: %v", canonicalSchema, err),
 				}
 			}
 			for _, rec := range records {
@@ -488,7 +536,7 @@ func (s *Service) materializeInputFrames(req *piv.PIVRequest, ent *license.Entit
 				frames = append(frames, modulert.InvokeInputFrame{
 					PortID:            portID,
 					Payload:           append([]byte(nil), rec.Data...),
-					SchemaName:        schemaName,
+					SchemaName:        canonicalSchema,
 					FileIdentifier:    fileIdentifier,
 					RootTypeName:      rootTypeName,
 					WireFormat:        wireFormat,

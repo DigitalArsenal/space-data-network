@@ -56,6 +56,12 @@ func (n *Node) initComputeService() {
 			}
 			return &license.GrantPolicyConfig{}
 		},
+		func(moduleID string) (*license.PluginAsset, bool) {
+			if n.pluginRegistry != nil {
+				return n.pluginRegistry.Get(moduleID)
+			}
+			return nil, false
+		},
 	)
 	if n.host != nil {
 		n.host.SetStreamHandler(ComputeInvokeProtocolID, n.handleComputeInvokeStream)

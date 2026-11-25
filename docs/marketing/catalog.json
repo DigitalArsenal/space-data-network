@@ -1263,12 +1263,12 @@
       "delivery": "node",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/marketing.html",
-      "evidence": "deployment/license/grant-policy.json compute_offload policy ENTITLED (plans analysis, enterprise; fallback browser-local); sdn-server/internal/api/compute.go POST /api/v1/compute/invoke and sdn-server/internal/node/compute.go /space-data-network/compute-invoke/1.0.0; scripts/thp-compute-offload.e2e.mjs",
+      "evidence": "deployment/license/grant-policy.json compute_offload policy ENTITLED (plans analysis, ai, spaceedge, pro, enterprise; fallback browser-local); sdn-server/internal/api/compute.go POST /api/v1/compute/invoke and sdn-server/internal/node/compute.go /space-data-network/compute-invoke/1.0.0; scripts/thp-compute-offload.e2e.mjs",
       "plan": "analysis",
       "freeCapabilities": [
         "Browser-local WASM execution fallback and open $THP threat profile lanes"
       ],
-      "planNote": "Compute offload requires an active analysis or enterprise plan. Unsubscribed callers fall back to browser-local WASM."
+      "planNote": "Compute offload requires an active analysis, ai, spaceedge, pro, or enterprise plan. Unsubscribed callers fall back to browser-local WASM."
     }
   ],
   "licenseClasses": {
