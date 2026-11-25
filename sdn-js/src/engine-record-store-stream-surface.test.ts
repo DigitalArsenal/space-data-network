@@ -143,14 +143,18 @@ describe('registered binary persistence', () => {
 
 
   it('opens the disk-backed lane when schemas are given — the gate that failed', async () => {
+    const persistenceStore = new MemoryFlatSqlPersistenceStore();
+    await persistenceStore.writeBytes('lane-gate:record-envelopes', new Uint8Array(1024));
     const store = await FlatSQLEngineRecordStore.open({
       persistenceKey: 'lane-gate',
       engine: engineFor('lane-gate'),
-      persistenceStore: new MemoryFlatSqlPersistenceStore(),
+      persistenceStore,
       schemas: [OMM_STANDARD],
     });
     expect(store.standardsStore).not.toBeNull();
     expect(store.registeredStandards()).toEqual([{ standardId: 'OMM', fileId: '$OMM', tableName: 'OMM' }]);
+    // Opening the store automatically removes the retired :record-envelopes key.
+    expect(await persistenceStore.readBytes('lane-gate:record-envelopes')).toBeNull();
     await store.close();
   });
 });

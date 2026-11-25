@@ -44,6 +44,16 @@ func splitStandardDoc(doc string) (string, string) {
 	return doc, ""
 }
 
+// internalEngineFrameStandards are FlatSQL's own storage-layer frame types
+// (checkpoint, mutation batch, state segment). They live in the embedded SDS
+// registry so the engine can compile them, but no published data record uses
+// them and picking one in the dashboard causes a registration error.
+var internalEngineFrameStandards = map[string]bool{
+	"FCK": true,
+	"FMB": true,
+	"FSG": true,
+}
+
 func standardsList() []standardRow {
 	standardsOnce.Do(func() {
 		reg, err := sds.NewSchemaRegistry()
@@ -53,6 +63,9 @@ func standardsList() []standardRow {
 		for _, info := range reg.Info() {
 			name, desc := splitStandardDoc(info.Description)
 			code := strings.TrimSuffix(info.Name, ".fbs")
+			if internalEngineFrameStandards[strings.ToUpper(code)] {
+				continue
+			}
 			standardsRows = append(standardsRows, standardRow{Code: code, Schema: info.Name, Name: name, Description: desc})
 		}
 		sort.Slice(standardsRows, func(i, j int) bool { return standardsRows[i].Code < standardsRows[j].Code })

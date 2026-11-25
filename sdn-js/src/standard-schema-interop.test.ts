@@ -4,8 +4,12 @@ import { createLocalFlatSqlStore } from './ui/runtime/local-flatsql';
 
 const responses = serverStandardSchemas();
 describe('server standard schemas in the dashboard engine', () => {
-  it('includes the required root and dependency edge cases', () => {
-    expect(responses.map(item => item.code)).toEqual(expect.arrayContaining(['OMM', 'CAT', 'OCM', 'CDM', 'EPM', 'RFM', 'PGR']));
+  it('includes the required root and dependency edge cases and excludes internal engine frame types', () => {
+    const codes = responses.map(item => item.code);
+    expect(codes).toEqual(expect.arrayContaining(['OMM', 'CAT', 'OCM', 'CDM', 'EPM', 'RFM', 'PGR']));
+    for (const internal of ['FCK', 'FMB', 'FSG']) {
+      expect(codes).not.toContain(internal);
+    }
   });
   it.each(responses)('$code compiles to a binary schema', async ({ text }) => {
     expect((await compileTestSchema(text)).byteLength).toBeGreaterThan(0);

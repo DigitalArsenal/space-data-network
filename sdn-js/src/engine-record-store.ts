@@ -38,7 +38,6 @@ export interface FlatSQLEngineRecordStoreOptions {
   schemas?: LocalFlatSqlSchema[];
   engine?: LocalFlatSqlEngineOptions;
   persistenceKey?: string | null;
-  desktopPersistenceBaseUrl?: string | null;
   fetch?: ((input: string | URL | Request, init?: RequestInit) => Promise<Response>) | null;
   persistenceStore?: LocalFlatSqlPersistenceStore | null;
   defaultSource?: string;
@@ -140,7 +139,7 @@ export class FlatSQLEngineRecordStore {
     const schemas = options.schemas ?? [];
     const standards = await createLocalFlatSqlStore({
       schemas, engine: options.engine, persistenceKey: options.persistenceKey,
-      desktopPersistenceBaseUrl: options.desktopPersistenceBaseUrl, fetch: options.fetch,
+      fetch: options.fetch,
       persistenceStore: options.persistenceStore, queryProfiles: options.queryProfiles, nowSeconds: options.nowSeconds,
     });
     const standardIds = new Map<string, RegisteredStandard>();
@@ -151,6 +150,11 @@ export class FlatSQLEngineRecordStore {
     const backing = options.persistenceStore ?? createDefaultLocalFlatSqlPersistenceStore(options);
     const syncEnvelopePersistence = options.persistenceKey && backing.available
       ? { store: backing, key: `${options.persistenceKey}:sync-envelopes` } : null;
+    if (options.persistenceKey && backing.available) {
+      // Purge the retired whole-blob envelope journal so upgrading browsers
+      // reclaim the ~10 MB key automatically.
+      await backing.deleteKey(`${options.persistenceKey}:record-envelopes`).catch(() => {});
+    }
     const store = new this({ standards, standardIds, options, syncEnvelopePersistence });
     try { await store.replaySyncEnvelopes(); return store; }
     catch (error) { await standards.destroy(); throw error; }
