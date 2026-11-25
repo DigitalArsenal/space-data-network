@@ -127,7 +127,7 @@ func builderConfig() map[string]interface{} {
 // (flowServiceRetrievalDue and the outcome switch in node.go).
 func bind(sf *flowrt.ServiceFlow, ledger *sourcemetrics.Store, diagnoses *[]error, mu *sync.Mutex) {
 	id, baseHours := sf.ID(), window.Hours()
-	sf.SetRetrievalGate(func() (bool, string) {
+	sf.SetRetrievalGate(func() (bool, string, flowrt.RetrievalOutcome) {
 		var due bool
 		var reason string
 		if !sf.Retrieves() {
@@ -135,24 +135,24 @@ func bind(sf *flowrt.ServiceFlow, ledger *sourcemetrics.Store, diagnoses *[]erro
 		} else {
 			due, reason, _ = ledger.RetrievalDue(id, baseHours, true)
 		}
-		if due {
-			ledger.RecordAttempt(id)
+		if !due {
+			return false, reason, nil
 		}
-		return due, reason
-	})
-	sf.SetRetrievalOutcome(func(err error) {
-		mu.Lock()
-		*diagnoses = append(*diagnoses, err)
-		mu.Unlock()
-		switch {
-		case errors.Is(err, flowrt.ErrRetrievalUnchanged):
-			ledger.RecordAttemptUnchanged(id)
-		case errors.Is(err, flowrt.ErrNothingToStore):
-			ledger.RecordAttemptSucceeded(id)
-		case errors.Is(err, flowrt.ErrLocalRunSucceeded):
-			ledger.RecordAttemptLocalSucceeded(id)
-		default:
-			ledger.RecordAttemptOutcome(id, err)
+		stamp := ledger.RecordAttempt(id)
+		return true, "", func(err error) {
+			mu.Lock()
+			*diagnoses = append(*diagnoses, err)
+			mu.Unlock()
+			switch {
+			case errors.Is(err, flowrt.ErrRetrievalUnchanged):
+				ledger.RecordAttemptUnchangedAt(id, stamp)
+			case errors.Is(err, flowrt.ErrNothingToStore):
+				ledger.RecordAttemptSucceededAt(id, stamp)
+			case errors.Is(err, flowrt.ErrLocalRunSucceeded):
+				ledger.RecordAttemptLocalSucceededAt(id, stamp)
+			default:
+				ledger.RecordAttemptOutcome(id, err)
+			}
 		}
 	})
 	sf.SetManualRunGate(func() (func(error), time.Time) { return ledger.AdmitManualRun(id, baseHours) })

@@ -64,12 +64,14 @@ func service(artifact, url string, ledger *sourcemetrics.Store) *flowrt.ServiceF
 	})
 	require(err == nil, "load flow: %v", err)
 	sf.SetReleaseAfterRun(true)
-	sf.SetRetrievalGate(func() (bool, string) { ledger.RecordAttempt(sf.ID()); return true, "" })
-	sf.SetRetrievalOutcome(func(err error) {
-		if errors.Is(err, flowrt.ErrRetrievalUnchanged) {
-			ledger.RecordAttemptUnchanged(sf.ID())
-		} else {
-			ledger.RecordAttemptOutcome(sf.ID(), err)
+	sf.SetRetrievalGate(func() (bool, string, flowrt.RetrievalOutcome) {
+		stamp := ledger.RecordAttempt(sf.ID())
+		return true, "", func(err error) {
+			if errors.Is(err, flowrt.ErrRetrievalUnchanged) {
+				ledger.RecordAttemptUnchangedAt(sf.ID(), stamp)
+			} else {
+				ledger.RecordAttemptOutcome(sf.ID(), err)
+			}
 		}
 	})
 	return sf

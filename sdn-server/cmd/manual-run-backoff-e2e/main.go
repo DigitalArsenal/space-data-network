@@ -113,21 +113,21 @@ func load(root, name, wasmPath, flowPath string, config map[string]interface{}, 
 // service with a configured retrieval_interval of window.
 func bind(sf *flowrt.ServiceFlow, ledger *sourcemetrics.Store, window time.Duration) {
 	id, baseHours := sf.ID(), window.Hours()
-	sf.SetRetrievalGate(func() (bool, string) {
+	sf.SetRetrievalGate(func() (bool, string, flowrt.RetrievalOutcome) {
 		due, reason, _ := ledger.RetrievalDue(id, baseHours, true)
-		if due {
-			ledger.RecordAttempt(id)
+		if !due {
+			return false, reason, nil
 		}
-		return due, reason
-	})
-	sf.SetRetrievalOutcome(func(err error) {
-		switch {
-		case errors.Is(err, flowrt.ErrRetrievalUnchanged):
-			ledger.RecordAttemptUnchanged(id)
-		case errors.Is(err, flowrt.ErrNothingToStore):
-			ledger.RecordAttemptSucceeded(id)
-		default:
-			ledger.RecordAttemptOutcome(id, err)
+		stamp := ledger.RecordAttempt(id)
+		return true, "", func(err error) {
+			switch {
+			case errors.Is(err, flowrt.ErrRetrievalUnchanged):
+				ledger.RecordAttemptUnchangedAt(id, stamp)
+			case errors.Is(err, flowrt.ErrNothingToStore):
+				ledger.RecordAttemptSucceededAt(id, stamp)
+			default:
+				ledger.RecordAttemptOutcome(id, err)
+			}
 		}
 	})
 	sf.SetManualRunGate(func() (func(error), time.Time) { return ledger.AdmitManualRun(id, baseHours) })
