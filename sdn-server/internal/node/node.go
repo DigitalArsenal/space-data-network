@@ -5966,15 +5966,6 @@ func (n *Node) applyLaneRetention(schema, providerID, sourceName string, importe
 		log.Debugf("Retention for %s %s/%s not applied: this node produces the lane", schema, providerID, sourceName)
 		return
 	}
-	if _, streamed := n.laneSubscription(schema, providerID, sourceName); streamed {
-		// The followed stream holds the lane's current batch (the one its
-		// producer states) and applies the rule to it (holdBatch,
-		// applyRules). This node's publication ledger never holds the
-		// stream's batches (see retentionSweep): judged from it, a
-		// publication imported here could evict the batch the stream holds.
-		log.Debugf("Retention for %s %s/%s left to the followed stream", schema, providerID, sourceName)
-		return
-	}
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
@@ -5997,6 +5988,15 @@ func (n *Node) applyLaneRetentionNow(resolver func(schema, providerID, sourceNam
 	case channels.RetentionKeepAll:
 		n.keepLaneHistory(schema, providerID, sourceName)
 	default:
+		if _, streamed := n.laneSubscription(schema, providerID, sourceName); streamed {
+			// The followed stream holds the lane's current batch (the one its
+			// producer states) and applies replace-current to it (holdBatch,
+			// applyRules). This node's publication ledger never holds the
+			// stream's batches (see retentionSweep): judged from it, a
+			// publication imported here could evict the batch the stream holds.
+			log.Debugf("Retention for %s %s/%s left to the followed stream", schema, providerID, sourceName)
+			return
+		}
 		n.replaceLaneCurrent(schema, providerID, sourceName, imported)
 	}
 }
