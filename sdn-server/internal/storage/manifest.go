@@ -28,15 +28,20 @@ import (
 
 // DatasetPublicationManifestOptions controls signed SDS DPM generation.
 type DatasetPublicationManifestOptions struct {
-	Export          *DatasetExport
-	DatasetID       string
-	UpdateID        string
-	FileID          string
-	ProviderPeerID  string
-	ProviderEPMCID  string
-	PublishedAt     time.Time
-	SigningKey      ed25519.PrivateKey
-	SchemaHash      string
+	Export         *DatasetExport
+	DatasetID      string
+	UpdateID       string
+	FileID         string
+	ProviderPeerID string
+	ProviderEPMCID string
+	PublishedAt    time.Time
+	SigningKey     ed25519.PrivateKey
+	SchemaHash     string
+	// IndexSchemaHash overrides the index asset's schema hash when rebuilding
+	// a signed manifest for verification (stack issue 1083): a peer whose
+	// PublicationState.fbs differs in any byte still verifies against the hash
+	// it actually signed rather than the receiver's own embedded copy.
+	IndexSchemaHash string
 	QueryEngine     string
 	QueryEngineVers string
 	// AuxiliaryAssets are extra OTHER-kind content-addressed DPM assets bound
@@ -1468,7 +1473,10 @@ func buildDatasetPublicationManifestBytes(opts DatasetPublicationManifestOptions
 	signatureTypeOffset := builder.CreateString(signatureType)
 	indexSchema, indexSchemaHash := "DPM.index.json", opts.SchemaHash
 	if strings.HasSuffix(export.IndexPath, ".index.fb") {
-		indexSchema, indexSchemaHash = publicationstate.SchemaName, publicationstate.SchemaSHA256()
+		indexSchema, indexSchemaHash = publicationstate.SchemaName, strings.TrimSpace(opts.IndexSchemaHash)
+		if indexSchemaHash == "" {
+			indexSchemaHash = publicationstate.SchemaSHA256()
+		}
 	}
 
 	assetOffsets := []flatbuffers.UOffsetT{
@@ -1840,6 +1848,7 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 		ProviderEPMCID:  string(manifest.PROVIDER_EPM_CID()),
 		PublishedAt:     publishedAt,
 		SchemaHash:      shardSchemaHash(manifest, shard.Kind),
+		IndexSchemaHash: shardSchemaHash(manifest, index.Kind),
 		QueryEngine:     string(query.QUERY_ENGINE()),
 		QueryEngineVers: string(query.QUERY_ENGINE_VERSION()),
 		AuxiliaryAssets: auxiliaryAssets,
