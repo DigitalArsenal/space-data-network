@@ -142,3 +142,72 @@ func TestAnUnchangedAttemptClearsTheStreakAndTheAlert(t *testing.T) {
 		t.Fatalf("consecutive failures after an unchanged attempt = %d, want 0", failures)
 	}
 }
+
+// TestTwoTimersDoNotEraseEachOthersFailures verifies both overlapping-timer
+// cases from stack issue 1018 on a local multi-timer flow:
+//  1. refresh fails first, then sibling rows-refresh (stamped in the same slot)
+//     finishes cleanly -> refresh's failure, backoff and alert remain intact.
+//  2. rows-refresh finishes cleanly first (clearing count to 0), then sibling
+//     refresh fails with a real error -> the error is recorded instead of being
+//     dropped when consecutive_failures == 0.
+//  3. A later attempt stamped AFTER the failure finishing cleanly clears it.
+func TestTwoTimersDoNotEraseEachOthersFailures(t *testing.T) {
+	store := openLedger(t)
+	registry := ops.NewRegistry()
+	store.SetAlerts(registry)
+
+	const appID = "catalog-builder"
+
+	// Case 1: both timers admitted in one slot; refresh fails, rows-refresh succeeds.
+	_ = store.RecordAttempt(appID)
+	rowsRefreshStamp := store.RecordAttempt(appID)
+	store.RecordAttemptOutcome(appID, errors.New("node(s) refused: control status 1"))
+	store.RecordAttemptLocalSucceededAt(appID, rowsRefreshStamp)
+
+	if _, failures := store.AttemptState(appID); failures != 1 {
+		t.Fatalf("case 1: failures = %d, want 1 (clean sibling must not clear newer failure)", failures)
+	}
+	if got := store.AttemptFailureReason(appID); got != "node(s) refused: control status 1" {
+		t.Fatalf("case 1: reason = %q, want refusal preserved", got)
+	}
+	if due, _, _ := store.LocalRunDue(appID, 1.0); due {
+		t.Fatal("case 1: LocalRunDue returned true, want backoff active after sibling refusal")
+	}
+
+	// Second slot failure raises the warning alert; clean sibling in same slot preserves it.
+	_ = store.RecordAttempt(appID)
+	rowsRefreshStamp2 := store.RecordAttempt(appID)
+	store.RecordAttemptOutcome(appID, errors.New("node(s) refused: control status 1"))
+	store.RecordAttemptLocalSucceededAt(appID, rowsRefreshStamp2)
+	if _, failures := store.AttemptState(appID); failures != 2 {
+		t.Fatalf("case 1 second slot: failures = %d, want 2", failures)
+	}
+	if active := registry.Active(); len(active) != 1 {
+		t.Fatalf("case 1 second slot: alerts = %+v, want 1 preserved alert", active)
+	}
+
+	// Case 3: a fresh attempt started AFTER the failures clears everything when clean.
+	laterClean := store.RecordAttempt(appID)
+	store.RecordAttemptLocalSucceededAt(appID, laterClean)
+	if _, failures := store.AttemptState(appID); failures != 0 {
+		t.Fatalf("case 3: failures = %d, want 0 after newer clean run", failures)
+	}
+	if active := registry.Active(); len(active) != 0 {
+		t.Fatalf("case 3: alerts = %+v, want empty after newer clean run", active)
+	}
+
+	// Case 2: rows-refresh succeeds first (count -> 0), then refresh fails with real error.
+	rowsRefreshFirst := store.RecordAttempt(appID)
+	_ = store.RecordAttempt(appID)
+	store.RecordAttemptLocalSucceededAt(appID, rowsRefreshFirst)
+	store.RecordAttemptOutcome(appID, errors.New("node(s) refused: control status 2"))
+	if _, failures := store.AttemptState(appID); failures != 1 {
+		t.Fatalf("case 2: failures = %d, want 1 (real error must not be dropped at count 0)", failures)
+	}
+	if got := store.AttemptFailureReason(appID); got != "node(s) refused: control status 2" {
+		t.Fatalf("case 2: reason = %q, want control status 2", got)
+	}
+	if due, _, _ := store.LocalRunDue(appID, 1.0); due {
+		t.Fatal("case 2: LocalRunDue returned true, want backoff active after refusal")
+	}
+}
