@@ -155,6 +155,40 @@ function runCommand(label, command, args, options) {
   }
 }
 
+const WINDOWS_CLEANUP_RETRY_OPTIONS = {
+  recursive: true,
+  force: true,
+  maxRetries: 10,
+  retryDelay: 250
+};
+const WINDOWS_TRANSIENT_CLEANUP_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY']);
+
+export function cleanupSmokeHome(
+  smokeHome,
+  {
+    platform = resolvePublishedInstallSmokePlatform(),
+    rm = rmSync,
+    warn = console.warn
+  } = {}
+) {
+  const normalizedPlatform = resolvePublishedInstallSmokePlatform(platform);
+  const options = normalizedPlatform === 'windows'
+    ? WINDOWS_CLEANUP_RETRY_OPTIONS
+    : { recursive: true, force: true };
+  try {
+    rm(smokeHome, options);
+    return true;
+  } catch (error) {
+    if (normalizedPlatform === 'windows' && WINDOWS_TRANSIENT_CLEANUP_CODES.has(error?.code)) {
+      warn(
+        `[published-install-smoke] warning: leaving temporary smoke home ${smokeHome} in place after ${error.code}: ${error.message}`
+      );
+      return false;
+    }
+    throw error;
+  }
+}
+
 export function runPublishedInstallSmoke({
   platform = resolvePublishedInstallSmokePlatform(),
   homeDir,
@@ -189,7 +223,7 @@ export function runPublishedInstallSmoke({
     }
   } finally {
     if (generatedHome && !keepHome) {
-      rmSync(smokeHome, { recursive: true, force: true });
+      cleanupSmokeHome(smokeHome, { platform: normalizedPlatform });
     } else {
       console.log(`[published-install-smoke] preserved smoke home: ${smokeHome}`);
     }
