@@ -28,15 +28,15 @@ import (
 
 // DatasetPublicationManifestOptions controls signed SDS DPM generation.
 type DatasetPublicationManifestOptions struct {
-	Export          *DatasetExport
-	DatasetID       string
-	UpdateID        string
-	FileID          string
-	ProviderPeerID  string
-	ProviderEPMCID  string
-	PublishedAt     time.Time
-	SigningKey      ed25519.PrivateKey
-	SchemaHash      string
+	Export         *DatasetExport
+	DatasetID      string
+	UpdateID       string
+	FileID         string
+	ProviderPeerID string
+	ProviderEPMCID string
+	PublishedAt    time.Time
+	SigningKey     ed25519.PrivateKey
+	SchemaHash     string
 	// IndexSchemaHash overrides the index asset's schema hash when rebuilding
 	// a signed manifest for verification (stack issue 1083): a peer whose
 	// PublicationState.fbs differs in any byte still verifies against the hash
