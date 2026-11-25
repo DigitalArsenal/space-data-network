@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   SMOKE_COMMANDS,
   buildPublishedInstallSmokePlan,
+  cleanupSmokeHome,
   resolvePublishedInstallSmokePlatform
 } from './published-install-smoke.mjs';
 
@@ -52,4 +53,36 @@ test('published installer smoke resolves host platform names', () => {
   assert.equal(resolvePublishedInstallSmokePlatform('darwin'), 'unix');
   assert.equal(resolvePublishedInstallSmokePlatform('win32'), 'windows');
   assert.throws(() => resolvePublishedInstallSmokePlatform('freebsd'), /Unsupported published installer smoke platform/);
+});
+
+test('published installer smoke retries Windows cleanup and warns instead of failing on EPERM', () => {
+  let seenOptions = null;
+  const warnings = [];
+  const removed = cleanupSmokeHome(String.raw`C:\Temp\sdn-published-install-abc`, {
+    platform: 'windows',
+    rm: (_path, options) => {
+      seenOptions = options;
+      const err = new Error('EPERM: operation not permitted, unlink');
+      err.code = 'EPERM';
+      throw err;
+    },
+    warn: (line) => warnings.push(line)
+  });
+
+  assert.equal(removed, false);
+  assert.equal(seenOptions.recursive, true);
+  assert.equal(seenOptions.force, true);
+  assert.ok(seenOptions.maxRetries >= 5);
+  assert.ok(seenOptions.retryDelay >= 100);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /EPERM/);
+
+  assert.throws(() => cleanupSmokeHome('/tmp/sdn-published-install-abc', {
+    platform: 'unix',
+    rm: () => {
+      const err = new Error('EPERM: operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    }
+  }), /EPERM/);
 });
