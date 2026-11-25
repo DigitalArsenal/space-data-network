@@ -71,3 +71,19 @@ func TestDatasetPublicationHandlerRefusesARefusedOrMalformedIngestResult(t *test
 		t.Fatalf("a truncated IngestResult: status %d called %v body %s", res.Code, service.called, res.Body.String())
 	}
 }
+
+func TestDatasetPublicationHandlerShortBodiesDoNotPanic(t *testing.T) {
+	service := &fakeDatasetPublicationService{err: errPublicationBadRequestForTest}
+	for _, body := range [][]byte{[]byte("{}"), []byte(""), []byte("1234567")} {
+		res := postIngestResult(t, service, body)
+		if res.Code != http.StatusBadRequest {
+			t.Fatalf("body %q: status = %d, want %d body=%s", string(body), res.Code, http.StatusBadRequest, res.Body.String())
+		}
+	}
+}
+
+var errPublicationBadRequestForTest = &publicationTestError{msg: "schema is required"}
+
+type publicationTestError struct{ msg string }
+
+func (e *publicationTestError) Error() string { return e.msg }

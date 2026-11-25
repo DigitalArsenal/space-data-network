@@ -257,7 +257,7 @@ func verifiedPublisherEPM(rec storage.DirectoryRecord, peerID string) (*standard
 // verifiedPublisherEPMBytes admits signed EPM bytes only when the signature
 // verifies and the profile advertises exactly the peer that produced the lane.
 func verifiedPublisherEPMBytes(data []byte, peerID string) (*standardsEPM.EPM, bool) {
-	if len(data) == 0 || !standardsEPM.SizePrefixedEPMBufferHasIdentifier(data) {
+	if len(data) < frameIdentifierOffset+frameIdentifierLength || !standardsEPM.SizePrefixedEPMBufferHasIdentifier(data) {
 		return nil, false
 	}
 	if err := epm.VerifyEPMSignature(data); err != nil {

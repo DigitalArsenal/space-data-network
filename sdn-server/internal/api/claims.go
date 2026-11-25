@@ -795,7 +795,7 @@ func DecodeClaimFrame(frame []byte) (claim ClaimRecord, err error) {
 		}
 	}()
 	frames, err := SplitFrames(frame)
-	if err != nil || len(frames) != 1 || !standardsCLM.SizePrefixedCLMBufferHasIdentifier(frame) {
+	if err != nil || len(frames) != 1 || len(frame) < frameIdentifierOffset+frameIdentifierLength || !standardsCLM.SizePrefixedCLMBufferHasIdentifier(frame) {
 		return ClaimRecord{}, errors.New("claims: frame is not one size-prefixed CLM record")
 	}
 	root := standardsCLM.GetSizePrefixedRootAsCLM(frame, 0)

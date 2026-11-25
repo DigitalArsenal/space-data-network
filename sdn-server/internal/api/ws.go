@@ -203,7 +203,7 @@ func (wh *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = c.send(wsErrorFrame("service_unavailable", "the schema index is not available"))
 			continue
 		}
-		if DSS.SizePrefixedDSSBufferHasIdentifier(frame) {
+		if len(frame) >= frameIdentifierOffset+frameIdentifierLength && DSS.SizePrefixedDSSBufferHasIdentifier(frame) {
 			if err := sds.VerifySizePrefixedStructure(SyncSchemaName, frame); err != nil {
 				_ = c.send(wsErrorFrame("invalid_frame", "malformed $DSS frame: "+err.Error()))
 				continue

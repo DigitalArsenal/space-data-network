@@ -609,7 +609,7 @@ func readFollowFile(path string) ([]FollowStatus, error) {
 	}
 	var out []FollowStatus
 	for _, frame := range frames {
-		if !DSS.SizePrefixedDSSBufferHasIdentifier(frame) {
+		if len(frame) < syncwire.FrameIdentifierOffset+syncwire.FrameIdentifierLength || !DSS.SizePrefixedDSSBufferHasIdentifier(frame) {
 			return nil, fmt.Errorf("%s %w: a frame that is not a $DSS record", path, errFollowFileDecode)
 		}
 		d := DSS.GetSizePrefixedRootAsDSS(frame, 0)

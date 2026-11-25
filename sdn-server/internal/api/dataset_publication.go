@@ -211,7 +211,7 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		return
 	}
 	var req DatasetPublicationRequest
-	if ingestresult.IngestResultBufferHasIdentifier(body) {
+	if len(body) >= framePrefixLength+frameIdentifierLength && ingestresult.IngestResultBufferHasIdentifier(body) {
 		// A typed ingest flow names the batch it just stored with its
 		// IngestResult (INGR), the same frame its storage hostcall answered.
 		req, err = datasetPublicationRequestFromIngestResult(body)
@@ -234,14 +234,14 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		log.Warnf("dataset publication: the answer keeps the server's write timeout (%v)", err)
 	}
 	result, err := h.service.PublishDatasetUpdate(r.Context(), req)
-	if PublicationRefusedForRestart(err) {
-		// The node is stopping or restarting for an update: retryable.
-		w.Header().Set("Retry-After", "60")
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		status := http.StatusBadRequest
+		if PublicationRefusedForRestart(err) {
+			// The node is stopping or restarting for an update: retryable.
+			w.Header().Set("Retry-After", "60")
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusAccepted, publicDatasetPublicationResult(result))
