@@ -543,6 +543,7 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
         return exchangeFlatSqlSyncStream(stream, payload, {
           timeoutMs: requestTimeoutMs,
           label: `FlatSQL sync exchange ${protocolId}`,
+          keepWriteOpen: protocolId.endsWith('/read-chunk'),
         });
       }
 
@@ -560,6 +561,7 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
           return await exchangeFlatSqlSyncStream(stream, payload, {
             timeoutMs: requestTimeoutMs,
             label: `FlatSQL sync exchange ${protocolId}`,
+            keepWriteOpen: protocolId.endsWith('/read-chunk'),
           });
         } catch (error) {
           lastError = error;
@@ -634,6 +636,12 @@ export function orderLibp2pFlatSqlSyncDialAddrs(addrs: string[]): string[] {
 export interface ExchangeFlatSqlSyncStreamOptions {
   timeoutMs?: number;
   label?: string;
+  /**
+   * Keep the outbound write side open until the inbound reply finishes
+   * (stack issue 1093). Used for framed ops like read-chunk whose server reads
+   * one size-prefixed frame and watches the open stream for a reset.
+   */
+  keepWriteOpen?: boolean;
 }
 
 /**
@@ -669,17 +677,19 @@ export async function exchangeFlatSqlSyncStream(
 ): Promise<Uint8Array> {
   const libp2pStream = stream as FlatSqlSyncMessageStream;
   const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  const label = options.label ?? 'FlatSQL sync exchange';
   return withAbortableTimeout(
-    options.label ?? 'FlatSQL sync exchange',
+    label,
     timeoutMs,
-    () => performFlatSqlSyncStreamExchange(libp2pStream, payloadBytes),
-    () => libp2pStream.close().catch(() => undefined),
+    () => performFlatSqlSyncStreamExchange(libp2pStream, payloadBytes, options.keepWriteOpen === true),
+    () => libp2pStream.abort(new Error(`${label} timed out after ${timeoutMs} ms`)),
   );
 }
 
 async function performFlatSqlSyncStreamExchange(
   libp2pStream: FlatSqlSyncMessageStream,
   payloadBytes: Uint8Array,
+  keepWriteOpen: boolean,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   // Start reading BEFORE writing: a MessageStream with no consumer buffers
@@ -697,9 +707,14 @@ async function performFlatSqlSyncStreamExchange(
         await libp2pStream.onDrain();
       }
     }
-    // Half-close so the peer reads to EOF and answers.
-    await libp2pStream.close();
+    if (!keepWriteOpen) {
+      // Half-close so a peer reading to EOF answers.
+      await libp2pStream.close();
+    }
     await draining;
+    if (keepWriteOpen) {
+      await libp2pStream.close().catch(() => undefined);
+    }
     return concatStreamBytes(chunks);
   } catch (error) {
     libp2pStream.abort(error instanceof Error ? error : new Error(String(error)));

@@ -118,7 +118,9 @@ func (h *CoreAPIHandler) handleRemoteRecords(w http.ResponseWriter, r *http.Requ
 		WriteErrorFrame(w, http.StatusBadGateway, "peer_request_failed", "Remote request failed", 0)
 		return
 	}
-	_ = stream.CloseWrite()
+	// Keep the write side open until the response ends so a client cancel or
+	// deadline resets the stream directly into the producer's watchStream
+	// instead of presenting an early EOF (stack issue 1093).
 	response, err := io.ReadAll(io.LimitReader(stream, remoteRecordsMaxResponse+1))
 	if err != nil || len(response) > remoteRecordsMaxResponse {
 		_ = stream.Reset()
