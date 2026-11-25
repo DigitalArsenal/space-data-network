@@ -2940,6 +2940,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				IdleTimeout:       120 * time.Second,
 				Handler:           gateway.wrap(newAdminUpgradeRouter(wsUpgradeProxy, secured)),
 			}
+			adminListener, err := net.Listen("tcp", adminAddr)
+			if err != nil {
+				return fmt.Errorf("admin server listen %s: %w", adminAddr, err)
+			}
 			go func() {
 				if cfg.Admin.RequireAuth && authHandler != nil {
 					if frontendUIMode == uiModeConjunction {
@@ -2957,9 +2961,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				var err error
 				if adminTLS {
 					adminServer.TLSConfig = tlsManager.TLSConfig()
-					err = adminServer.ListenAndServeTLS("", "")
+					err = adminServer.ServeTLS(adminListener, "", "")
 				} else {
-					err = adminServer.ListenAndServe()
+					err = adminServer.Serve(adminListener)
 				}
 				if err != nil && err != http.ErrServerClosed {
 					log.Warnf("Admin server error: %v", err)

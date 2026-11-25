@@ -263,8 +263,12 @@ func runRealDaemonUpdateChannel(t *testing.T, install realInstaller) {
 		t.Fatal(err)
 	}
 	tracker.add(daemon.Process.Pid)
-	go func() { _ = daemon.Wait() }()
-	waitRealReady(t, adminBase, bootBudget, filepath.Join(work, "daemon-v1.log"))
+	v1Exited := make(chan struct{})
+	go func() {
+		_ = daemon.Wait()
+		close(v1Exited)
+	}()
+	waitRealReadyOrExit(t, adminBase, bootBudget, filepath.Join(work, "daemon-v1.log"), v1Exited)
 	requireIsolated(t, filepath.Join(work, "daemon-v1.log"))
 	requireRealIdentity(t, adminBase, v1)
 
@@ -467,8 +471,41 @@ func writeRealDaemonConfig(t *testing.T, path, store string, adminPort, kuboPort
 	}
 }
 
+const (
+	// Non-ephemeral loopback port range for real-daemon tests: well below Linux
+	// (32768-60999) and macOS/Windows (49152-65535) ephemeral ranges so outgoing
+	// client sockets never race with a port picked for a daemon listener.
+	loopbackPortRangeBase = 20000
+	loopbackPortRangeSpan = 10000
+)
+
+var (
+	loopbackPortMu       sync.Mutex
+	loopbackPortCursor   int
+	loopbackPortReserved = map[int]struct{}{}
+)
+
 func freeLoopbackPort(t *testing.T) int {
 	t.Helper()
+	loopbackPortMu.Lock()
+	defer loopbackPortMu.Unlock()
+	if loopbackPortCursor == 0 {
+		loopbackPortCursor = (os.Getpid() * 131) % loopbackPortRangeSpan
+	}
+	for tried := 0; tried < loopbackPortRangeSpan; tried++ {
+		port := loopbackPortRangeBase + ((loopbackPortCursor + tried) % loopbackPortRangeSpan)
+		if _, used := loopbackPortReserved[port]; used {
+			continue
+		}
+		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
+		}
+		_ = listener.Close()
+		loopbackPortReserved[port] = struct{}{}
+		loopbackPortCursor = (loopbackPortCursor + tried + 1) % loopbackPortRangeSpan
+		return port
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -804,19 +841,44 @@ func processField(pid int, field string) string {
 
 func waitRealReady(t *testing.T, base string, budget time.Duration, logPath string) {
 	t.Helper()
+	waitRealReadyOrExit(t, base, budget, logPath, nil)
+}
+
+func waitRealReadyOrExit(t *testing.T, base string, budget time.Duration, logPath string, exited <-chan struct{}) {
+	t.Helper()
+	if err := pollRealReadyOrExit(base, budget, logPath, exited); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pollRealReadyOrExit(base string, budget time.Duration, logPath string, exited <-chan struct{}) error {
 	deadline := time.Now().Add(budget)
-	start := time.Now()
+	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		if resp, err := http.Get(base + daemonReadyPath); err == nil {
+		select {
+		case <-exited:
+			return fmt.Errorf("the daemon exited before becoming ready:\n%s", tailString(readFileString(logPath), 40))
+		default:
+		}
+		if resp, err := client.Get(base + daemonReadyPath); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				t.Logf("daemon ready after %s", time.Since(start).Round(time.Second))
-				return
+				return nil
 			}
 		}
-		time.Sleep(time.Second)
+		if logPath != "" {
+			if logText := readFileString(logPath); strings.Contains(logText, "Admin server error: listen tcp") ||
+				strings.Contains(logText, "admin server listen ") {
+				return fmt.Errorf("the daemon failed to bind its admin listener:\n%s", tailString(logText, 40))
+			}
+		}
+		select {
+		case <-exited:
+			return fmt.Errorf("the daemon exited before becoming ready:\n%s", tailString(readFileString(logPath), 40))
+		case <-time.After(time.Second):
+		}
 	}
-	t.Fatalf("the daemon was not ready within %s:\n%s", budget, tailString(readFileString(logPath), 40))
+	return fmt.Errorf("the daemon was not ready within %s:\n%s", budget, tailString(readFileString(logPath), 40))
 }
 
 // requireIsolatedConfig fails the test before any daemon starts unless the
@@ -1916,7 +1978,7 @@ func (d *pushDaemon) start(t *testing.T, budget time.Duration) {
 		}
 		close(exited)
 	}()
-	waitRealReady(t, d.adminBase, budget, name)
+	waitRealReadyOrExit(t, d.adminBase, budget, name, exited)
 }
 
 func (d *pushDaemon) stop(t *testing.T) { t.Helper(); d.trackHelper(); d.tracker.stopAll() }
