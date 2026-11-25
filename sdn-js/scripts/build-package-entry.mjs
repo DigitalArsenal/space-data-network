@@ -362,6 +362,26 @@ async function buildPackageEntries({ outdir, walletPlugins }) {
 
 await buildPackageEntries({ outdir: 'dist', walletPlugins: walletBuildMode.plugins });
 
+// Node-only subpath (`@spacedatanetwork/sdn-js/node`): filesystem identity
+// persistence (`fileIdentityStore`) plus `loadOrCreateIdentity`. Built with
+// `platform: 'node'` so browser bundles never pull `node:fs` or `node:crypto`.
+await build({
+  ...sharedBuildOptions,
+  platform: 'node',
+  mainFields: ['module', 'main'],
+  conditions: ['node', 'import', 'module'],
+  external: ['node:*'],
+  plugins: [...sharedBuildOptions.plugins, ...walletBuildMode.plugins],
+  entryPoints: [path.join(packageRoot, 'src/node/index.ts')],
+  outdir: path.join(packageRoot, 'dist/node'),
+  outbase: path.join(packageRoot, 'src/node'),
+  splitting: false,
+  entryNames: '[dir]/[name]',
+  outExtension: {
+    '.js': '.mjs',
+  },
+});
+
 // The published `./external-wallet` subpath: the same entries with the HD
 // wallet runtime externalized through the committed adapter, under
 // dist/external-wallet/. Embedders that ship their own reviewed runtime
