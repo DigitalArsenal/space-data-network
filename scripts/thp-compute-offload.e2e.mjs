@@ -646,9 +646,9 @@ async function main() {
       'All 7 threat phenomenologies must be represented',
     );
     const rfLane = sdn.decodeThreatProfileRecord(thpLanes.find((l) => l.slug === 'rf-jammer').bytes);
-    const notPublicParam = rfLane.PARAMETERS.find((p) => p.PARAM_KEY === 'JAMMER_EIRP_DBW');
-    assert.ok(notPublicParam, 'rf-jammer lane must include JAMMER_EIRP_DBW parameter');
-    assert.equal(notPublicParam.PROVENANCE.CERTAINTY, 5, 'JAMMER_EIRP_DBW must carry NOT_PUBLIC certainty');
+    const notPublicParam = rfLane.PARAMETERS.find((p) => p.PARAM_KEY === 'jammer_eirp_dbw');
+    assert.ok(notPublicParam, 'rf-jammer lane must include jammer_eirp_dbw parameter');
+    assert.equal(notPublicParam.PROVENANCE.CERTAINTY, 5, 'jammer_eirp_dbw must carry NOT_PUBLIC certainty');
     assert.ok(
       rfLane.PARAMETERS.some((p) => p.PARAM_KEY === 'WHAT_IF_TEMPLATE'),
       'rf-jammer lane must include analyst WHAT_IF_TEMPLATE',

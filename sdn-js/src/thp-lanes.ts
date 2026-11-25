@@ -225,7 +225,7 @@ export const DEFAULT_THP_LANE_SPECS: readonly ThreatLaneSpec[] = [
     ],
     parameters: [
       {
-        paramKey: 'JAMMER_EIRP_DBW',
+        paramKey: 'jammer_eirp_dbw',
         valueKind: thpParamValueKind.SCALAR_DOUBLE,
         numericValue: 72.0,
         units: 'dBW',
@@ -254,7 +254,7 @@ export const DEFAULT_THP_LANE_SPECS: readonly ThreatLaneSpec[] = [
       {
         paramKey: 'WHAT_IF_TEMPLATE',
         valueKind: thpParamValueKind.TEXT,
-        textValue: 'JAMMER_EIRP_DBW:40-90:dBW',
+        textValue: 'jammer_eirp_dbw:40-90:dBW',
         sourceUri: 'https://spacedatanetwork.org/thp/defaults/rf-jammer',
         certainty: thpCertaintyLevel.STATED_WHATIF,
         accessTier: thpAccessTier.OPEN,
