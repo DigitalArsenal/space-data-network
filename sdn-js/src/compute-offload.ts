@@ -110,7 +110,11 @@ export function extractFlatBufferFileIdentifier(bytes: Uint8Array): string {
   if (bytes.length < 8) {
     return '';
   }
-  return String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]).replace(/\0+$/g, '');
+  let end = 8;
+  while (end > 4 && bytes[end - 1] === 0) {
+    end--;
+  }
+  return String.fromCharCode(...bytes.subarray(4, end));
 }
 
 export function encodeComputePivotRequest(options: ComputePivotRequestOptions): Uint8Array {
@@ -249,7 +253,11 @@ export async function invokeRemoteCompute(options: ComputeInvokeOptions): Promis
     throw new Error('fetch is unavailable for remote compute invocation');
   }
 
-  const normalizedBase = options.baseUrl.replace(/\/+$/, '');
+  let baseEnd = options.baseUrl.length;
+  while (baseEnd > 0 && options.baseUrl.charCodeAt(baseEnd - 1) === 47) {
+    baseEnd--;
+  }
+  const normalizedBase = options.baseUrl.slice(0, baseEnd);
   const url = `${normalizedBase}${COMPUTE_INVOKE_PATH}`;
   const pivBytes = encodeComputePivotRequest({
     methodId: options.methodId,

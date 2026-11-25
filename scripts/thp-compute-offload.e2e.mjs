@@ -565,8 +565,10 @@ async function main() {
     ].join('\n');
     fs.writeFileSync(configPath, yaml);
 
-    const logPath = path.join(tmpRoot, 'daemon.log');
-    const logFd = fs.openSync(logPath, 'w');
+    let daemonLogTail = '';
+    const appendDaemonLog = (chunk) => {
+      daemonLogTail = (daemonLogTail + chunk.toString('utf8')).slice(-8192);
+    };
     daemon = spawn(daemonBin, ['daemon', '--allow-multi-daemon', '--config', configPath], {
       cwd: tmpRoot,
       env: {
@@ -574,9 +576,11 @@ async function main() {
         HOME: homeDir,
         SDN_PLUGIN_ROOT: pluginRoot,
       },
-      stdio: ['ignore', logFd, logFd],
+      stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
+    daemon.stdout?.on('data', appendDaemonLog);
+    daemon.stderr?.on('data', appendDaemonLog);
 
     let daemonExited = false;
     daemon.once('exit', () => {
@@ -587,7 +591,7 @@ async function main() {
     let healthy = false;
     while (Date.now() < deadline) {
       if (daemonExited) {
-        const logTail = fs.readFileSync(logPath, 'utf8').slice(-4000);
+        const logTail = daemonLogTail.slice(-4000);
         throw new Error(`spacedatanetwork daemon exited before becoming healthy:\n${logTail}`);
       }
       try {
