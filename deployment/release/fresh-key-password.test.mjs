@@ -297,7 +297,7 @@ test('postinstall: the message says what a copy of the data directory opens, and
 const docs = {
   'docs/INSTALL.md': read('docs/INSTALL.md'),
   'docs/onboarding.html': read('docs/onboarding.html'),
-  'docs/releases/unreleased.md': read('docs/releases/unreleased.md'),
+  'docs/releases/v1.1.16.md': read('docs/releases/v1.1.16.md'),
 };
 
 // The documented backup step, `docker exec ... show-identity --show-mnemonic`,
@@ -346,12 +346,12 @@ test('docs: the generated paths match the installers, and a data copy opening th
   assert.match(postinstall, /\nKEY_PASSWORD_FILE=\/var\/lib\/spacedatanetwork\/key-password\n/);
   for (const path of ['~/sdn-key-password', '/app/data/key-password', '/var/lib/spacedatanetwork/key-password']) {
     assert.ok(install.includes(path), `INSTALL.md names ${path}`);
-    assert.ok(docs['docs/releases/unreleased.md'].includes(path), `release notes name ${path}`);
+    assert.ok(docs['docs/releases/v1.1.16.md'].includes(path), `release notes name ${path}`);
   }
-  assert.doesNotMatch(install + docs['docs/releases/unreleased.md'], /\.key-password|\.spacedatanetwork\/key-password/);
+  assert.doesNotMatch(install + docs['docs/releases/v1.1.16.md'], /\.key-password|\.spacedatanetwork\/key-password/);
   assert.match(install, /a copy of the volume alone \([^)]*\) opens the node identity and its credential store/);
   assert.match(install, /a copy\s+of `\/var\/lib\/spacedatanetwork` alone opens the node identity and its\s+credential store/);
-  assert.match(docs['docs/releases/unreleased.md'], /a copy of the volume alone opens the node identity and its credential\s+store/);
+  assert.match(docs['docs/releases/v1.1.16.md'], /a copy of the volume alone opens the node identity and its credential\s+store/);
 });
 
 // Releases are named by what they carry ("a build that carries this change"),
