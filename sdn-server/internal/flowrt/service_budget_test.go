@@ -257,4 +257,7 @@ func TestFireTriggerDiscardsInterruptedInstance(t *testing.T) {
 	if sfClean.inst == nil {
 		t.Fatal("clean FireTrigger discarded its WASM instance when releaseAfterRun=false")
 	}
+	if _, err := sfClean.FireTrigger(context.Background(), "tick"); err != nil {
+		t.Fatalf("second clean FireTrigger failed (instance poisoned?): %v", err)
+	}
 }

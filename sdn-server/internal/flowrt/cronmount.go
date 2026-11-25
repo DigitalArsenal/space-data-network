@@ -683,8 +683,10 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) (out [
 			sf.inst.rt.ResetState()
 			return
 		}
-		if queued, reset := discardIngressResidue(sf.inst.rt, trigger.Index); reset {
-			log.Warnf("Flow service %q: trigger %q left %d unconsumed ingress frame(s) — resetting instance state", sf.programID, triggerID, queued)
+		if sf.inst.rt.mod != nil && sf.inst.rt.mod.HasFunction(runtimeExportIngressStates) {
+			if queued, reset := discardIngressResidue(sf.inst.rt, trigger.Index); reset {
+				log.Warnf("Flow service %q: trigger %q left %d unconsumed ingress frame(s) — resetting instance state", sf.programID, triggerID, queued)
+			}
 		}
 	}()
 	rt := sf.inst.rt
