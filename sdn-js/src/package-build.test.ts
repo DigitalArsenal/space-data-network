@@ -183,10 +183,18 @@ describe('sdn-js package build', () => {
     const offenders: Record<string, string[]> = {};
 
     for (const modulePath of modules) {
+      const rel = path.relative(DIST_PATH, modulePath);
       const source = await fs.readFile(modulePath, 'utf8');
+      if (rel === 'node/index.mjs') {
+        const nonBuiltin = collectBareSpecifiers(source).filter((spec) => !spec.startsWith('node:'));
+        if (nonBuiltin.length > 0) {
+          offenders[rel] = nonBuiltin;
+        }
+        continue;
+      }
       const bareSpecifiers = collectBrowserBareSpecifiers(source);
       if (bareSpecifiers.length > 0) {
-        offenders[path.relative(DIST_PATH, modulePath)] = bareSpecifiers;
+        offenders[rel] = bareSpecifiers;
       }
     }
 
@@ -219,9 +227,10 @@ describe('sdn-js package build', () => {
       'transport/http.mjs',
       'ui/index.mjs',
     ];
+    const nodeEntries = ['node/index.mjs'];
     const runtimeNames = ['browser-guest.mjs', 'browser-host.mjs', 'node-guest.mjs', 'node-host.mjs', 'opfsIoWorker.mjs', 'wasiThreadBrowserWorker.mjs'];
     const runtimeModules = entries.flatMap(entry => runtimeNames.map(name => path.posix.join(path.posix.dirname(entry), 'runtime', name)));
-    expect(modules.map(modulePath => path.relative(DIST_PATH, modulePath))).toEqual([...entries, ...runtimeModules].sort());
+    expect(modules.map(modulePath => path.relative(DIST_PATH, modulePath))).toEqual([...entries, ...nodeEntries, ...runtimeModules].sort());
     for (const entry of entries) {
       for (const asset of ['flatsql.wasm', 'integrity.json']) await fs.access(path.resolve(DIST_PATH, path.dirname(entry), asset));
     }
@@ -244,6 +253,8 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['./status']?.types).toBe('./dist/status/index.d.ts');
     expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
     expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
+    expect(packageJson.exports?.['./node']?.import).toBe('./dist/node/index.mjs');
+    expect(packageJson.exports?.['./node']?.types).toBe('./dist/node/index.d.ts');
     // The externalized-wallet build of the three wallet-bearing entries: the
     // same API (same declarations), runtime obtained from the host.
     expect(packageJson.exports?.['./external-wallet']).toEqual({
@@ -296,6 +307,7 @@ describe('sdn-js package build', () => {
       './ui',
       './status',
       './storefront',
+      './node',
       './external-wallet',
       './external-wallet/ui',
       './external-wallet/status',

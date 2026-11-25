@@ -562,3 +562,11 @@ export { tleToOMM } from './format/tle';
 export type { OmmRecord, TleLines } from './format/tle';
 export * from './peer-directory';
 export * from './peer-epm';
+export {
+  IDENTITY_SEED_LENGTH,
+  loadOrCreateIdentity,
+} from './node-identity';
+export type {
+  IdentityStore,
+  LoadOrCreateIdentityOptions,
+} from './node-identity';

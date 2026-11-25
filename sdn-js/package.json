@@ -1,6 +1,6 @@
 {
   "name": "@spacedatanetwork/sdn-js",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Space Data Network JavaScript library for browser and Node.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -24,6 +24,10 @@
     "./storefront": {
       "types": "./dist/storefront/index.d.ts",
       "import": "./dist/storefront/index.mjs"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.mjs"
     },
     "./external-wallet": {
       "types": "./dist/index.d.ts",
