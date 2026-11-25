@@ -563,6 +563,48 @@ export type { OmmRecord, TleLines } from './format/tle';
 export * from './peer-directory';
 export * from './peer-epm';
 export {
+  DEFAULT_THP_LANE_SPECS,
+  buildThreatProfileRecord,
+  buildDefaultThreatProfileRecords,
+  canonicalThreatProfilePayload,
+  signThreatProfileRecord,
+  verifyThreatProfileSignature,
+  decodeThreatProfileRecord,
+} from './thp-lanes';
+export type {
+  ThreatPhenomenologySlug,
+  ThreatReferenceInput,
+  ThreatParameterInput,
+  ThreatLaneSpec,
+  ThreatLaneBuildOptions,
+  BuiltThreatLane,
+  ThreatSignatureVerificationResult,
+} from './thp-lanes';
+export {
+  COMPUTE_INVOKE_PATH,
+  COMPUTE_FALLBACK_HEADER,
+  COMPUTE_MODULE_ID_HEADER,
+  COMPUTE_WASM_SHA256_HEADER,
+  COMPUTE_FALLBACK_BROWSER_LOCAL,
+  ComputeOffloadError,
+  extractFlatBufferFileIdentifier,
+  encodeComputePivotRequest,
+  decodeQrpErrorFrame,
+  decodeComputeOutputFrame,
+  decodeTmxFrame,
+  decodeCoaFrame,
+  decodeDcoFrame,
+  invokeRemoteCompute,
+} from './compute-offload';
+export type {
+  ComputeInputFrame,
+  ComputePivotRequestOptions,
+  QrpErrorSummary,
+  ComputeOutputFrame,
+  ComputeInvokeOptions,
+  ComputeInvokeResult,
+} from './compute-offload';
+export {
   IDENTITY_SEED_LENGTH,
   loadOrCreateIdentity,
 } from './node-identity';

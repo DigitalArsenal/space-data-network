@@ -59,6 +59,14 @@ export const BASELINE = [
     note: 'CVE-2023-26248. The advisory has introduced:0 and NO fixed event — unfixed in every version, a known property of the Amino DHT rather than an upgrade lever. Not actionable by bumping.',
   },
   {
+    id: 'GO-2026-6974',
+    module: 'go.opentelemetry.io/otel/sdk',
+    found: 'v1.46.0',
+    fixed: 'v1.47.0',
+    reviewed: '2026-11-25',
+    note: "AttributeValueLengthLimit bypass via U+FFFD runes (CVE-2026-128085 / GHSA-q7gw-24fr-5p69) in go.opentelemetry.io/otel/sdk and go.opentelemetry.io/otel/trace. govulncheck reports CHA interface reachability through caps.httpCapBodyReader.Read (to otelhttp.wrappedBody.Read -> attrnorm.Truncate) and peers.AdminUI.ServeHTTP (to http.ServeMux.ServeHTTP -> trace.autoSpan). Kubo v0.43.1 compiles go.opentelemetry.io/otel/sdk v1.46.0 and go.opentelemetry.io/otel/trace v1.46.0; selecting v1.47.0 fails check-kubo-pin.js --build-list. This baseline records exposure constrained by Kubo dependency lockstep.",
+  },
+  {
     id: 'GO-2026-6865',
     module: 'github.com/klauspost/compress',
     found: 'v1.19.1',

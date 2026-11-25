@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 // Grant policy — the per-module entitlement rule the provider applies before it
@@ -48,7 +50,65 @@ const (
 	// greppable, is listed on every boot, and can be flipped to "allowlist"
 	// by editing one file.
 	GrantPolicyLinkKey = "link-key"
+
+	// GrantPolicySubscription requires an active paid entitlement in
+	// EntitlementStore (subscription-gated compute offload or commercial tier).
+	GrantPolicySubscription = "subscription"
+
+	// DefaultComputeFallbackSignal is emitted in X-SDN-Compute-Fallback when
+	// remote compute offload fails closed.
+	DefaultComputeFallbackSignal = "browser-local"
 )
+
+// ErrModuleAccessDenied indicates that the requested module is internal or
+// restricted by grant policy and may not be remotely invoked by the caller.
+var ErrModuleAccessDenied = errors.New("module access denied for remote compute offload")
+
+// ComputeOffloadPolicy configures subscription-gated remote WASM execution.
+type ComputeOffloadPolicy struct {
+	Policy                  string   `json:"policy,omitempty"`
+	RequiredPlans           []string `json:"required_plans,omitempty"`
+	FallbackSignal          string   `json:"fallback_signal,omitempty"`
+	DeniedModules           []string `json:"denied_modules,omitempty"`
+	AllowedHydrationSchemas []string `json:"allowed_hydration_schemas,omitempty"`
+}
+
+var builtInDeniedComputeModules = map[string]struct{}{
+	"licensing": {},
+	"ailog":     {},
+	"pmm":       {},
+}
+
+// restrictedInternalSchemas cannot be hydrated by remote compute offload
+// under any configuration.
+var restrictedInternalSchemas = map[string]struct{}{
+	"ACL.fbs":  {},
+	"CLM.fbs":  {},
+	"CRD.fbs":  {},
+	"ENC.fbs":  {},
+	"ENT.fbs":  {},
+	"KMF.fbs":  {},
+	"KRF.fbs":  {},
+	"LCH.fbs":  {},
+	"LGR.fbs":  {},
+	"LPF.fbs":  {},
+	"LWK.fbs":  {},
+	"PGR.fbs":  {},
+	"PKB.fbs":  {},
+	"PLG.fbs":  {},
+	"PLHD.fbs": {},
+	"PLK.fbs":  {},
+	"PLOG.fbs": {},
+	"PUR.fbs":  {},
+	"REV.fbs":  {},
+	"RHD.fbs":  {},
+	"STF.fbs":  {},
+	"STR.fbs":  {},
+	"SUB.fbs":  {},
+	"TNR.fbs":  {},
+	"TRE.fbs":  {},
+	"USR.fbs":  {},
+}
 
 // GrantPolicyFileName is the operator-owned policy file, read from the plugin
 // root beside catalog.json. It is deliberately NOT a compiled-in table and NOT
@@ -91,6 +151,13 @@ type GrantPolicyConfig struct {
 	// whose key is superseded must stop being handed out soon. Zero retires
 	// at once.
 	RetireSupersededAfterSeconds *int `json:"retire_superseded_after_seconds,omitempty"`
+
+	// ComputeOffload configures subscription-gated remote WASM compute offload.
+	ComputeOffload *ComputeOffloadPolicy `json:"compute_offload,omitempty"`
+
+	// THPTiers maps ACCESS_TIER names ("OPEN", "COMMERCIAL", "GOVERNMENT")
+	// to access policies ("open", "subscription", "allowlist").
+	THPTiers map[string]string `json:"thp_tiers,omitempty"`
 }
 
 // DeliveryLimitsConfig is the "delivery_limits" block of grant-policy.json.
@@ -231,7 +298,235 @@ func (c *GrantPolicyConfig) Validate() error {
 			return fmt.Errorf("modules[%d] (%s): policy is required", i, rule.Match)
 		}
 	}
+	if c.ComputeOffload != nil {
+		policy := strings.ToLower(strings.TrimSpace(c.ComputeOffload.Policy))
+		switch policy {
+		case "", GrantPolicySubscription, GrantPolicyAllowlist, GrantPolicyOpen:
+		default:
+			return fmt.Errorf("compute_offload.policy: unknown policy %q", c.ComputeOffload.Policy)
+		}
+		for i, schema := range c.ComputeOffload.AllowedHydrationSchemas {
+			canonical := sds.NormalizeSchemaFileName(schema)
+			if canonical == "" || sds.ValidateSchemaName(canonical) != nil {
+				return fmt.Errorf("compute_offload.allowed_hydration_schemas[%d]: invalid schema %q", i, schema)
+			}
+			if _, restricted := restrictedInternalSchemas[canonical]; restricted {
+				return fmt.Errorf("compute_offload.allowed_hydration_schemas[%d]: restricted internal schema %q cannot be exposed", i, canonical)
+			}
+		}
+	}
+	for tier, rawPolicy := range c.THPTiers {
+		if strings.TrimSpace(tier) == "" {
+			return fmt.Errorf("thp_tiers: empty tier key")
+		}
+		policy := strings.ToLower(strings.TrimSpace(rawPolicy))
+		switch policy {
+		case GrantPolicyOpen, GrantPolicySubscription, GrantPolicyAllowlist:
+		default:
+			return fmt.Errorf("thp_tiers[%q]: unknown policy %q", tier, rawPolicy)
+		}
+	}
 	return nil
+}
+
+// ComputeFallbackSignal returns the configured fallback header value when remote
+// compute offload fails closed.
+func (c *GrantPolicyConfig) ComputeFallbackSignal() string {
+	if c != nil && c.ComputeOffload != nil {
+		if signal := strings.TrimSpace(c.ComputeOffload.FallbackSignal); signal != "" {
+			return signal
+		}
+	}
+	return DefaultComputeFallbackSignal
+}
+
+// ResolveComputeOffloadAccess enforces fail-closed subscription gating for
+// remote WASM compute offload.
+func (c *GrantPolicyConfig) ResolveComputeOffloadAccess(ent *Entitlement, now time.Time) (bool, string) {
+	if c == nil {
+		return false, "compute offload grant policy unavailable"
+	}
+	policy := GrantPolicySubscription
+	if c.ComputeOffload != nil {
+		if p := strings.ToLower(strings.TrimSpace(c.ComputeOffload.Policy)); p != "" {
+			policy = p
+		}
+	}
+	if c.EnforceAllowlistOnly && policy == GrantPolicyOpen {
+		policy = GrantPolicyAllowlist
+	}
+	switch policy {
+	case GrantPolicyOpen:
+		return true, "open"
+	case GrantPolicySubscription, GrantPolicyAllowlist:
+		if ent == nil {
+			return false, "authentication and active subscription required"
+		}
+		if !ent.IsActive(now) {
+			return false, "subscription entitlement is inactive or expired"
+		}
+		plan := strings.ToLower(strings.TrimSpace(ent.Plan))
+		if plan == "" || plan == defaultPlan {
+			return false, "paid subscription plan required"
+		}
+		var required []string
+		if c.ComputeOffload != nil {
+			required = c.ComputeOffload.RequiredPlans
+		}
+		if len(required) > 0 {
+			for _, candidate := range required {
+				if strings.EqualFold(strings.TrimSpace(candidate), plan) {
+					return true, fmt.Sprintf("entitled (%s)", plan)
+				}
+			}
+			return false, fmt.Sprintf("plan %q is not entitled for compute offload", ent.Plan)
+		}
+		if policy == GrantPolicyAllowlist {
+			return false, "compute offload allowlist is empty"
+		}
+		return true, fmt.Sprintf("entitled (%s)", plan)
+	default:
+		return false, fmt.Sprintf("unknown compute offload policy %q", policy)
+	}
+}
+
+// IsDeniedComputeModule reports whether moduleID is an internal/privileged
+// module excluded from remote compute offload.
+func (c *GrantPolicyConfig) IsDeniedComputeModule(moduleID string) bool {
+	trimmed := strings.TrimSpace(moduleID)
+	if trimmed == "" {
+		return true
+	}
+	if _, denied := builtInDeniedComputeModules[strings.ToLower(trimmed)]; denied {
+		return true
+	}
+	if c != nil && c.ComputeOffload != nil {
+		for _, pattern := range c.ComputeOffload.DeniedModules {
+			if matchModulePattern(pattern, trimmed) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ResolveComputeModuleAccess enforces BOTH plan-level compute offload
+// entitlement AND per-module grant-policy / allowed_xpubs authorization,
+// while excluding internal modules such as "licensing".
+func (c *GrantPolicyConfig) ResolveComputeModuleAccess(moduleID string, asset *PluginAsset, ent *Entitlement, now time.Time) (bool, string, error) {
+	trimmedID := strings.TrimSpace(moduleID)
+	if trimmedID == "" {
+		return false, "", fmt.Errorf("%w: compute module ID is required", ErrModuleAccessDenied)
+	}
+	if c.IsDeniedComputeModule(trimmedID) {
+		return false, "", fmt.Errorf("%w: module %q is internal and excluded from remote compute offload", ErrModuleAccessDenied, trimmedID)
+	}
+	if allowed, reason := c.ResolveComputeOffloadAccess(ent, now); !allowed {
+		return false, "", errors.New(reason)
+	}
+
+	catalogPolicy := ""
+	var allowedXpubs []string
+	if asset != nil {
+		catalogPolicy = asset.GrantPolicy
+		allowedXpubs = asset.AllowedXpubs
+	}
+	resolved := c.Resolve(trimmedID, catalogPolicy)
+	if IsOpenGrantPolicy(resolved.Policy) && len(allowedXpubs) > 0 {
+		resolved.Policy = GrantPolicyAllowlist
+	}
+
+	if resolved.Policy == GrantPolicyOpen {
+		return true, resolved.Source, nil
+	}
+
+	callerXPub := ""
+	if ent != nil {
+		callerXPub = strings.TrimSpace(ent.XPub)
+	}
+	if callerXPub != "" && resolved.Policy == GrantPolicyAllowlist {
+		for _, xpub := range allowedXpubs {
+			if strings.TrimSpace(xpub) == callerXPub {
+				return true, resolved.Source, nil
+			}
+		}
+	}
+	return false, "", fmt.Errorf("%w: module %q requires explicit entitlement under policy %q", ErrModuleAccessDenied, trimmedID, resolved.Policy)
+}
+
+// IsHydrationAllowedSchema reports whether schemaName is permitted for
+// store-backed TAB.SIZE == 0 input hydration during remote compute offload.
+func (c *GrantPolicyConfig) IsHydrationAllowedSchema(schemaName string) (string, bool) {
+	canonical := sds.NormalizeSchemaFileName(schemaName)
+	if canonical == "" || sds.ValidateSchemaName(canonical) != nil {
+		return "", false
+	}
+	if _, restricted := restrictedInternalSchemas[canonical]; restricted {
+		return canonical, false
+	}
+	if sds.IsPublicReadSchema(canonical) {
+		return canonical, true
+	}
+	if c != nil && c.ComputeOffload != nil {
+		for _, allowed := range c.ComputeOffload.AllowedHydrationSchemas {
+			if sds.NormalizeSchemaFileName(allowed) == canonical {
+				return canonical, true
+			}
+		}
+	}
+	return canonical, false
+}
+
+// ResolveTHPAccess enforces tier-based access control for $THP records based on
+// thp_tiers in grant-policy.json.
+func (c *GrantPolicyConfig) ResolveTHPAccess(tier string, ent *Entitlement, now time.Time) (bool, string) {
+	normalizedTier := strings.ToUpper(strings.TrimSpace(tier))
+	if normalizedTier == "" {
+		normalizedTier = "OPEN"
+	}
+	policy := ""
+	if c != nil && len(c.THPTiers) > 0 {
+		for k, v := range c.THPTiers {
+			if strings.EqualFold(strings.TrimSpace(k), normalizedTier) {
+				policy = strings.ToLower(strings.TrimSpace(v))
+				break
+			}
+		}
+	}
+	if policy == "" {
+		switch normalizedTier {
+		case "OPEN":
+			policy = GrantPolicyOpen
+		case "COMMERCIAL":
+			policy = GrantPolicySubscription
+		case "GOVERNMENT":
+			policy = GrantPolicyAllowlist
+		default:
+			return false, fmt.Sprintf("unknown access tier %q", tier)
+		}
+	}
+	if c != nil && c.EnforceAllowlistOnly && policy == GrantPolicyOpen {
+		policy = GrantPolicyAllowlist
+	}
+	switch policy {
+	case GrantPolicyOpen:
+		return true, "open"
+	case GrantPolicySubscription:
+		return c.ResolveComputeOffloadAccess(ent, now)
+	case GrantPolicyAllowlist:
+		if ent == nil || !ent.IsActive(now) {
+			return false, fmt.Sprintf("%s tier requires an active entitled account", normalizedTier)
+		}
+		plan := strings.ToLower(strings.TrimSpace(ent.Plan))
+		switch plan {
+		case "government", "enterprise", "spaceedge":
+			return true, fmt.Sprintf("allowlisted (%s)", plan)
+		default:
+			return false, fmt.Sprintf("%s tier requires restricted authorization", normalizedTier)
+		}
+	default:
+		return false, fmt.Sprintf("unknown tier policy %q", policy)
+	}
 }
 
 // ResolvedGrantPolicy is the effective policy for one module plus the audit

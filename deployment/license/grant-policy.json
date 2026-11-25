@@ -8,6 +8,20 @@
   "default_policy": "allowlist",
   "enforce_allowlist_only": false,
 
+  "compute_offload": {
+    "policy": "subscription",
+    "required_plans": ["analysis", "ai", "spaceedge", "pro", "enterprise"],
+    "fallback_signal": "browser-local",
+    "denied_modules": ["licensing", "ailog", "pmm"],
+    "allowed_hydration_schemas": ["THP.fbs", "CDM.fbs", "SIT.fbs", "SWS.fbs", "RBF.fbs", "RDE.fbs"]
+  },
+
+  "thp_tiers": {
+    "OPEN": "open",
+    "COMMERCIAL": "subscription",
+    "GOVERNMENT": "allowlist"
+  },
+
   "modules": [
     { "match": "com.orbpro.rf-*", "policy": "allowlist", "note": "Paid. Key-protected: catalog allowed_xpubs plus the wallet's proof of the account key." },
     { "match": "com.orbpro.sensor-shaders*", "policy": "allowlist", "note": "Paid, with its GLSL bundle. Key-protected." },
@@ -24,6 +38,16 @@
     { "match": "com.orbpro.wasm-engine", "policy": "open", "note": "Free." },
     { "match": "com.digitalarsenal.flows.data-retrieval", "policy": "open", "note": "Free." },
     { "match": "org.spacedata.analysis.conjunction.assessment", "policy": "open", "note": "Free (App 1 conjunction)." },
+    { "match": "com.digitalarsenal.analysis.radiation-belts", "policy": "open", "note": "Open M4 #700 radiation belt flux module." },
+    { "match": "com.digitalarsenal.analysis.radiation-effects", "policy": "open", "note": "Open M4 #702 radiation effects module." },
+    { "match": "com.digitalarsenal.analysis.asat-reach", "policy": "open", "note": "Open M5a direct-ascent ASAT reach analyzer." },
+    { "match": "com.digitalarsenal.analysis.coplanar-approach", "policy": "open", "note": "Open M5a co-orbital / RPO approach analyzer." },
+    { "match": "com.digitalarsenal.analysis.directed-energy", "policy": "open", "note": "Open M5a optical / laser directed-energy analyzer." },
+    { "match": "com.digitalarsenal.analysis.space-env-threat", "policy": "open", "note": "Open M5a space environment & storm drag analyzer." },
+    { "match": "com.digitalarsenal.analysis.network-resilience", "policy": "open", "note": "Open M5a ground custody & network resilience analyzer." },
+    { "match": "com.digitalarsenal.analysis.threat-matrix", "policy": "open", "note": "Open M5a multi-phenomenology threat matrix aggregator (browser-local free; remote offload gated by compute_offload policy)." },
+    { "match": "com.digitalarsenal.analysis.coa-synthesizer", "policy": "open", "note": "Open M5b defensive COA synthesizer (browser-local free; remote offload gated by compute_offload policy)." },
+    { "match": "com.digitalarsenal.propagator.sgp4-xp", "policy": "open", "note": "Open SGP4-XP propagator." },
 
     { "match": "com.spaceaware.test.add-two", "policy": "open", "note": "Test fixture for the SDN test page." },
     { "match": "com.digitalarsenal.examples.remote-sdn-live-e2e", "policy": "open", "note": "Test fixture for the SDN test page and the live E2E." },

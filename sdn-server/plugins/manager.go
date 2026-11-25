@@ -935,6 +935,14 @@ func (m *Manager) Get(id string) Plugin {
 	return nil
 }
 
+// RegisteredPlugins returns a snapshot of all currently registered plugins.
+func (m *Manager) RegisteredPlugins() []Plugin {
+	if m == nil {
+		return nil
+	}
+	return m.registeredPlugins()
+}
+
 // SetModuleUIURL assigns a registered module's UI page URL. This is the
 // write side of app-manifest UI resolution (H1 loop): an app manifest
 // (internal/appmanifest.AppManifest) declares which member module serves

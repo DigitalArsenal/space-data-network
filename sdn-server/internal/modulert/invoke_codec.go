@@ -13,12 +13,21 @@ const (
 
 	payloadWireFormatFlatbuffer    = 0
 	payloadWireFormatAlignedBinary = 1
+
+	pivStatusOK       int32 = 0
+	pivStatusNotFound int32 = 1
+	pivStatusYielded  int32 = 2
+	pivStatusFailed   int32 = 3
 )
 
 type pluginInvokeFrame struct {
-	PortID string
-	Offset uint32
-	Size   uint32
+	PortID         string
+	Offset         uint32
+	Size           uint32
+	SchemaName     string
+	FileIdentifier string
+	RootTypeName   string
+	WireFormat     byte
 }
 
 type InvokeInputFrame struct {
@@ -37,11 +46,15 @@ type InvokeInputFrame struct {
 }
 
 type pluginInvokeResponse struct {
-	StatusCode   int32
-	ErrorCode    string
-	ErrorMessage string
-	OutputFrames []pluginInvokeFrame
-	PayloadArena []byte
+	StatusCode       int32
+	Status           int32
+	Yielded          bool
+	BacklogRemaining uint32
+	TraceID          uint64
+	ErrorCode        string
+	ErrorMessage     string
+	OutputFrames     []pluginInvokeFrame
+	PayloadArena     []byte
 }
 
 func encodePluginInvokeRequest(methodID string, payload []byte) ([]byte, error) {
@@ -54,13 +67,28 @@ func encodePluginInvokeRequest(methodID string, payload []byte) ([]byte, error) 
 }
 
 func encodePluginInvokeRequestFrames(methodID string, frames []InvokeInputFrame) ([]byte, error) {
+	return encodePluginInvokeRequestStream(methodID, frames, 0, 0)
+}
+
+func encodePluginInvokeRequestStream(methodID string, frames []InvokeInputFrame, traceID uint64, outputStreamCap uint32) ([]byte, error) {
 	if methodID == "" {
 		return nil, fmt.Errorf("method id is required")
 	}
 
-	packedFrames, payloadArena, arenaAlignment, err := packInvokeInputFrames(frames)
-	if err != nil {
-		return nil, err
+	var (
+		packedFrames   []InvokeInputFrame
+		payloadArena   []byte
+		arenaAlignment uint32 = invokeArenaAlignment
+		err            error
+	)
+	if len(frames) == 0 && traceID != 0 {
+		packedFrames = nil
+		payloadArena = nil
+	} else {
+		packedFrames, payloadArena, arenaAlignment, err = packInvokeInputFrames(frames)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	builder := flatbuffers.NewBuilder(256 + len(payloadArena))
@@ -83,6 +111,12 @@ func encodePluginInvokeRequestFrames(methodID string, frames []InvokeInputFrame)
 	piv.PIVRequestAddMethodId(builder, methodIDOffset)
 	piv.PIVRequestAddInputs(builder, inputFramesOffset)
 	piv.PIVRequestAddPayloadArena(builder, payloadArenaOffset)
+	if traceID != 0 {
+		piv.PIVRequestAddTraceId(builder, traceID)
+	}
+	if outputStreamCap != 0 {
+		piv.PIVRequestAddOutputStreamCap(builder, outputStreamCap)
+	}
 	requestOffset := piv.PIVRequestEnd(builder)
 
 	piv.PIVStart(builder)
@@ -260,10 +294,14 @@ func decodePluginInvokeResponseBytes(data []byte) (*pluginInvokeResponse, error)
 	}
 
 	response := &pluginInvokeResponse{
-		StatusCode:   envelope.StatusCode(),
-		ErrorCode:    string(envelope.ErrorCode()),
-		ErrorMessage: string(envelope.ErrorMessage()),
-		PayloadArena: append([]byte(nil), envelope.PayloadArenaBytes()...),
+		StatusCode:       envelope.StatusCode(),
+		Status:           int32(envelope.Status()),
+		Yielded:          envelope.Yielded(),
+		BacklogRemaining: envelope.BacklogRemaining(),
+		TraceID:          envelope.TraceId(),
+		ErrorCode:        string(envelope.ErrorCode()),
+		ErrorMessage:     string(envelope.ErrorMessage()),
+		PayloadArena:     append([]byte(nil), envelope.PayloadArenaBytes()...),
 	}
 
 	outputCount := envelope.OutputsLength()
@@ -273,11 +311,18 @@ func decodePluginInvokeResponseBytes(data []byte) (*pluginInvokeResponse, error)
 		if !envelope.Outputs(&frameTable, index) {
 			continue
 		}
-		response.OutputFrames = append(response.OutputFrames, pluginInvokeFrame{
-			PortID: string(frameTable.PortId()),
-			Offset: frameTable.Offset(),
-			Size:   frameTable.Size(),
-		})
+		frame := pluginInvokeFrame{
+			PortID:     string(frameTable.PortId()),
+			Offset:     frameTable.Offset(),
+			Size:       frameTable.Size(),
+			WireFormat: byte(frameTable.WireFormat()),
+		}
+		if typeRef := frameTable.TypeRef(nil); typeRef != nil {
+			frame.SchemaName = string(typeRef.SchemaName())
+			frame.FileIdentifier = string(typeRef.FileIdentifier())
+			frame.RootTypeName = string(typeRef.RootType())
+		}
+		response.OutputFrames = append(response.OutputFrames, frame)
 	}
 
 	return response, nil

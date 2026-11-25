@@ -10,31 +10,107 @@ import (
 
 // InvokeOutputFrame is one named output emitted by a module-sdk method.
 type InvokeOutputFrame struct {
-	PortID  string
-	Payload []byte
+	PortID         string
+	Payload        []byte
+	SchemaName     string
+	FileIdentifier string
+	RootTypeName   string
+	WireFormat     byte
 }
+
+const maxYieldResumeRounds = 4096
 
 // InvokeMethodOutputs calls plugin_invoke_stream and returns every output frame
 // in the order supplied by the guest. InvokeMethodFrames intentionally keeps
 // its historical single-output selection behavior.
 func (m *Module) InvokeMethodOutputs(ctx context.Context, methodID string, inputFrames []InvokeInputFrame) (outputs []InvokeOutputFrame, err error) {
+	err = m.InvokeMethodStream(ctx, methodID, inputFrames, 0, func(frame InvokeOutputFrame) error {
+		outputs = append(outputs, frame)
+		return nil
+	})
+	return outputs, err
+}
+
+// InvokeMethodStream calls plugin_invoke_stream, emitting each output frame
+// progressively and resuming across YIELDED responses until complete or ctx is
+// canceled.
+func (m *Module) InvokeMethodStream(
+	ctx context.Context,
+	methodID string,
+	inputFrames []InvokeInputFrame,
+	outputStreamCap uint32,
+	emit func(InvokeOutputFrame) error,
+) (err error) {
 	started := time.Now()
 	defer func() {
-		m.recordInvokeResult(started, err)
+		if m != nil {
+			m.recordInvokeResult(started, err)
+		}
 	}()
+
+	if m == nil {
+		return fmt.Errorf("module not loaded")
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.refreshMemoryStatsLocked()
 
 	if m.mod == nil {
-		return nil, fmt.Errorf("module not loaded")
+		return fmt.Errorf("module not loaded")
 	}
 	if m.paused {
-		return nil, fmt.Errorf("module paused")
+		return fmt.Errorf("module paused")
 	}
 
-	req, err := encodePluginInvokeRequestFrames(methodID, inputFrames)
+	var traceID uint64
+	if outputStreamCap > 0 {
+		traceID = 1
+	}
+	currentInputs := inputFrames
+	for round := 0; round < maxYieldResumeRounds; round++ {
+		if ctx != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+		}
+
+		response, invokeErr := m.invokeStreamOnceLocked(ctx, methodID, currentInputs, traceID, outputStreamCap)
+		if invokeErr != nil {
+			return invokeErr
+		}
+		frames, extractErr := extractPluginInvokeOutputs(response)
+		if extractErr != nil {
+			return extractErr
+		}
+		if emit != nil {
+			for _, frame := range frames {
+				if emitErr := emit(frame); emitErr != nil {
+					return emitErr
+				}
+			}
+		}
+		if !response.Yielded && response.Status != pivStatusYielded {
+			return nil
+		}
+		if response.TraceID != 0 {
+			traceID = response.TraceID
+		} else if traceID == 0 {
+			traceID = 1
+		}
+		currentInputs = nil
+	}
+	return fmt.Errorf("plugin_invoke_stream(%s) exceeded %d yield resume rounds", methodID, maxYieldResumeRounds)
+}
+
+func (m *Module) invokeStreamOnceLocked(
+	ctx context.Context,
+	methodID string,
+	inputFrames []InvokeInputFrame,
+	traceID uint64,
+	outputStreamCap uint32,
+) (*pluginInvokeResponse, error) {
+	req, err := encodePluginInvokeRequestStream(methodID, inputFrames, traceID, outputStreamCap)
 	if err != nil {
 		return nil, fmt.Errorf("encode invoke request: %w", err)
 	}
@@ -84,14 +160,20 @@ func (m *Module) InvokeMethodOutputs(ctx context.Context, methodID string, input
 	if err != nil {
 		return nil, fmt.Errorf("decode invoke response: %w (raw %d bytes: %.400q)", err, len(responseBytes), responseBytes)
 	}
-	return extractPluginInvokeOutputs(response)
+	return response, nil
 }
 
 func extractPluginInvokeOutputs(response *pluginInvokeResponse) ([]InvokeOutputFrame, error) {
 	if response == nil {
 		return nil, fmt.Errorf("plugin invoke response is required")
 	}
-	if response.StatusCode != 0 {
+	if response.Status == pivStatusNotFound {
+		if response.ErrorMessage != "" {
+			return nil, fmt.Errorf("plugin invoke method not found: %s", response.ErrorMessage)
+		}
+		return nil, fmt.Errorf("plugin invoke method not found")
+	}
+	if response.Status == pivStatusFailed || response.StatusCode != 0 {
 		if response.ErrorMessage != "" {
 			return nil, fmt.Errorf("plugin invoke failed (%d): %s", response.StatusCode, response.ErrorMessage)
 		}
@@ -117,8 +199,12 @@ func extractPluginInvokeOutputs(response *pluginInvokeResponse) ([]InvokeOutputF
 			)
 		}
 		outputs = append(outputs, InvokeOutputFrame{
-			PortID:  frame.PortID,
-			Payload: append([]byte(nil), response.PayloadArena[frame.Offset:end]...),
+			PortID:         frame.PortID,
+			Payload:        append([]byte(nil), response.PayloadArena[frame.Offset:end]...),
+			SchemaName:     frame.SchemaName,
+			FileIdentifier: frame.FileIdentifier,
+			RootTypeName:   frame.RootTypeName,
+			WireFormat:     frame.WireFormat,
 		})
 	}
 	return outputs, nil
