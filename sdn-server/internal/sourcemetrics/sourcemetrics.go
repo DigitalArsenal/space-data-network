@@ -189,6 +189,20 @@ type Store struct {
 	// is the durable record, the registry is only how a CURRENT failure stays
 	// visible to an operator.
 	alerts ops.Sink
+	// seq and lastFailure* order overlapping attempts of a multi-timer flow
+	// (stack issue 1018) so a clean run of one timer clears only failures
+	// recorded before that attempt started.
+	seq            uint64
+	lastFailureAt  map[string]time.Time
+	lastFailureSeq map[string]uint64
+}
+
+// AttemptStamp identifies when a flow attempt was admitted by RecordAttempt.
+// Passing it to an attempt's outcome keeps a sibling timer's clean finish from
+// clearing a failure recorded after this attempt began.
+type AttemptStamp struct {
+	At  time.Time
+	Seq uint64
 }
 
 // Lane alert thresholds. A single failed retrieval is ordinary — a publisher
@@ -573,16 +587,19 @@ func EffectiveDebounceHoursFrom(baseHours float64, consecutiveFailures int) floa
 // it as a failure until an ingest proves otherwise. Assuming failure is the
 // safe direction: if the run never lands anything, the window has already
 // widened without anyone having to notice.
-func (s *Store) RecordAttempt(appID string) {
+func (s *Store) RecordAttempt(appID string) AttemptStamp {
 	if s == nil || s.db == nil {
-		return
+		return AttemptStamp{}
 	}
 	appID = strings.TrimSpace(appID)
 	if appID == "" {
-		return
+		return AttemptStamp{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now()
+	s.seq++
+	stamp := AttemptStamp{At: now, Seq: s.seq}
 	if _, err := s.db.Exec(`
 		INSERT INTO app_attempts (app_id, last_attempt_at, attempt_count, consecutive_failures)
 		VALUES (?, ?, 1, 1)
@@ -590,9 +607,10 @@ func (s *Store) RecordAttempt(appID string) {
 			last_attempt_at      = excluded.last_attempt_at,
 			attempt_count        = app_attempts.attempt_count + 1,
 			consecutive_failures = app_attempts.consecutive_failures + 1`,
-		appID, unixOrZero(s.now())); err != nil {
+		appID, unixOrZero(now)); err != nil {
 		log.Debugf("record attempt %s: %v", appID, err)
 	}
+	return stamp
 }
 
 // clearAppFailuresLocked resets an app's failure streak. Called when a batch
@@ -607,6 +625,8 @@ func (s *Store) clearAppFailuresLocked(appID string) {
 		appID); err != nil {
 		log.Debugf("clear failures %s: %v", appID, err)
 	}
+	delete(s.lastFailureAt, appID)
+	delete(s.lastFailureSeq, appID)
 	if s.alerts != nil {
 		s.alerts.Clear(ops.KindLaneFailing, appID)
 	}
@@ -618,7 +638,13 @@ func (s *Store) clearAppFailuresLocked(appID string) {
 // way an ingest clears it, so an unchanged upstream never widens the window
 // or raises a lane alert.
 func (s *Store) RecordAttemptUnchanged(appID string) {
-	s.closeAttemptSucceeded(appID, "upstream unchanged (304), nothing new to land")
+	s.closeAttemptSucceededAt(appID, "upstream unchanged (304), nothing new to land", AttemptStamp{})
+}
+
+// RecordAttemptUnchangedAt closes an attempt stamped at attempt whose
+// conditional fetch answered 304.
+func (s *Store) RecordAttemptUnchangedAt(appID string, attempt AttemptStamp) {
+	s.closeAttemptSucceededAt(appID, "upstream unchanged (304), nothing new to land", attempt)
 }
 
 // RecordAttemptSucceeded closes an attempt that succeeded by the run's own
@@ -627,7 +653,13 @@ func (s *Store) RecordAttemptUnchanged(appID string) {
 // so "no batch landed" says nothing about it. The streak is cleared as an
 // ingest clears it.
 func (s *Store) RecordAttemptSucceeded(appID string) {
-	s.closeAttemptSucceeded(appID, "run succeeded; the flow stores nothing, so no batch was owed")
+	s.closeAttemptSucceededAt(appID, "run succeeded; the flow stores nothing, so no batch was owed", AttemptStamp{})
+}
+
+// RecordAttemptSucceededAt closes an attempt stamped at attempt that succeeded
+// with no batch owed.
+func (s *Store) RecordAttemptSucceededAt(appID string, attempt AttemptStamp) {
+	s.closeAttemptSucceededAt(appID, "run succeeded; the flow stores nothing, so no batch was owed", attempt)
 }
 
 // RecordAttemptLocalSucceeded closes an attempt of a flow that fetches from no
@@ -635,10 +667,21 @@ func (s *Store) RecordAttemptSucceeded(appID string) {
 // tick with nothing new to write is normal. The streak is cleared as an ingest
 // clears it.
 func (s *Store) RecordAttemptLocalSucceeded(appID string) {
-	s.closeAttemptSucceeded(appID, "run succeeded; the flow fetches from no publisher, so nothing new to store is not a failure")
+	s.closeAttemptSucceededAt(appID, "run succeeded; the flow fetches from no publisher, so nothing new to store is not a failure", AttemptStamp{})
+}
+
+// RecordAttemptLocalSucceededAt closes an attempt stamped at attempt of a local
+// flow that ran without error, preserving any failure recorded after attempt
+// started (stack issue 1018).
+func (s *Store) RecordAttemptLocalSucceededAt(appID string, attempt AttemptStamp) {
+	s.closeAttemptSucceededAt(appID, "run succeeded; the flow fetches from no publisher, so nothing new to store is not a failure", attempt)
 }
 
 func (s *Store) closeAttemptSucceeded(appID, why string) {
+	s.closeAttemptSucceededAt(appID, why, AttemptStamp{})
+}
+
+func (s *Store) closeAttemptSucceededAt(appID, why string, attempt AttemptStamp) {
 	if s == nil || s.db == nil {
 		return
 	}
@@ -648,6 +691,35 @@ func (s *Store) closeAttemptSucceeded(appID, why string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !attempt.At.IsZero() {
+		var (
+			failures int
+			reason   string
+			failUnix int64
+		)
+		if err := s.db.QueryRow(
+			`SELECT consecutive_failures, last_failure_reason, last_failure_at FROM app_attempts WHERE app_id = ?`,
+			appID).Scan(&failures, &reason, &failUnix); err == nil && failures > 0 && strings.TrimSpace(reason) != "" {
+			failSeq := s.lastFailureSeq[appID]
+			failAt := s.lastFailureAt[appID]
+			newerFailure := (attempt.Seq > 0 && failSeq > attempt.Seq) ||
+				(!failAt.IsZero() && failAt.After(attempt.At)) ||
+				failUnix > unixOrZero(attempt.At)
+			if newerFailure {
+				// Undo only this clean attempt's pessimistic +1; keep the
+				// sibling's recorded failure, backoff, and alert intact.
+				if failures > 1 {
+					if _, uerr := s.db.Exec(
+						`UPDATE app_attempts SET consecutive_failures = consecutive_failures - 1 WHERE app_id = ? AND consecutive_failures > 1`,
+						appID); uerr != nil {
+						log.Debugf("preserve sibling failure %s: %v", appID, uerr)
+					}
+				}
+				log.Infof("Retrieval attempt for %s: %s (preserving newer failure: %s)", appID, why, reason)
+				return
+			}
+		}
+	}
 	s.clearAppFailuresLocked(appID)
 	log.Infof("Retrieval attempt for %s: %s", appID, why)
 }
@@ -818,11 +890,10 @@ func (s *Store) RecordAttemptOutcome(appID string, runErr error) {
 		log.Debugf("attempt outcome %s: %v", appID, err)
 		return
 	}
-	if failures == 0 {
-		// A batch landed and already cleared the streak: nothing to explain.
-		return
-	}
 	if errors.Is(runErr, context.Canceled) {
+		if failures == 0 {
+			return
+		}
 		// Undo only this attempt's pessimistic failure. Earlier failures and
 		// their diagnosis remain intact. Clear the attempt gate so the next
 		// tick can retry after shutdown, instead of waiting another window.
@@ -834,16 +905,33 @@ func (s *Store) RecordAttemptOutcome(appID string, runErr error) {
 		log.Infof("Retrieval attempt for %s: cancelled", appID)
 		return
 	}
+	if failures == 0 && runErr == nil {
+		// A batch landed and already cleared the streak: nothing to explain.
+		return
+	}
 
+	now := s.now()
 	reason := "run completed but landed no batch"
 	if runErr != nil {
 		reason = runErr.Error()
+		if failures == 0 {
+			// A sibling timer cleared the streak before this real error finished
+			// (stack issue 1018): record it instead of dropping it.
+			failures = 1
+		}
 	}
 	if _, err := s.db.Exec(
-		`UPDATE app_attempts SET last_failure_reason = ?, last_failure_at = ? WHERE app_id = ?`,
-		reason, unixOrZero(s.now()), appID); err != nil {
+		`UPDATE app_attempts SET consecutive_failures = ?, last_failure_reason = ?, last_failure_at = ?, last_attempt_at = CASE WHEN last_attempt_at = 0 THEN ? ELSE last_attempt_at END WHERE app_id = ?`,
+		failures, reason, unixOrZero(now), unixOrZero(now), appID); err != nil {
 		log.Debugf("record attempt outcome %s: %v", appID, err)
 	}
+	if s.lastFailureAt == nil {
+		s.lastFailureAt = map[string]time.Time{}
+		s.lastFailureSeq = map[string]uint64{}
+	}
+	s.seq++
+	s.lastFailureAt[appID] = now
+	s.lastFailureSeq[appID] = s.seq
 	log.Warnf("Retrieval attempt failed for %s (%d consecutive; next window %.0fh): %s",
 		appID, failures, EffectiveDebounceHours(failures), reason)
 	s.raiseLaneAlertLocked(appID, failures, reason)

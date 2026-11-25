@@ -2688,33 +2688,29 @@ func (n *Node) startFlowServices() error {
 		// Publisher fetch policy, ENFORCED. Every automatic pull passes this
 		// gate, so the debounce window the node advertises on /api/apps is the
 		// window it actually honours; a manual run passes the gate below.
-		sf.SetRetrievalGate(func() (bool, string) {
+		// Each admitted attempt gets its own outcome closure stamped with its
+		// start (stack issue 1018), so a sibling timer finishing cleanly does
+		// not erase a newer failure.
+		sf.SetRetrievalGate(func() (bool, string, flowrt.RetrievalOutcome) {
 			allowed, reason := n.flowServiceRetrievalDue(serviceID)
-			if allowed && n.sourceMetrics != nil {
-				// Stamp the ATTEMPT, not just the success. A flow whose pulls
-				// keep failing writes no source row, so without this it stays
-				// permanently "due" and retries on every restart.
-				n.sourceMetrics.RecordAttempt(serviceID)
+			if !allowed || n.sourceMetrics == nil {
+				return allowed, reason, nil
 			}
-			return allowed, reason
-		})
-		// ...and record how the attempt it just stamped actually ended. Without
-		// this the counter that widens a publisher's window carries no cause at
-		// all, and an operator reading "2 consecutive failures" has nothing to
-		// act on.
-		sf.SetRetrievalOutcome(func(runErr error) {
-			if n.sourceMetrics == nil {
-				return
-			}
-			switch {
-			case errors.Is(runErr, flowrt.ErrRetrievalUnchanged):
-				n.sourceMetrics.RecordAttemptUnchanged(serviceID)
-			case errors.Is(runErr, flowrt.ErrNothingToStore):
-				n.sourceMetrics.RecordAttemptSucceeded(serviceID)
-			case errors.Is(runErr, flowrt.ErrLocalRunSucceeded):
-				n.sourceMetrics.RecordAttemptLocalSucceeded(serviceID)
-			default:
-				n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
+			// Stamp the ATTEMPT, not just the success. A flow whose pulls
+			// keep failing writes no source row, so without this it stays
+			// permanently "due" and retries on every restart.
+			stamp := n.sourceMetrics.RecordAttempt(serviceID)
+			return true, reason, func(runErr error) {
+				switch {
+				case errors.Is(runErr, flowrt.ErrRetrievalUnchanged):
+					n.sourceMetrics.RecordAttemptUnchangedAt(serviceID, stamp)
+				case errors.Is(runErr, flowrt.ErrNothingToStore):
+					n.sourceMetrics.RecordAttemptSucceededAt(serviceID, stamp)
+				case errors.Is(runErr, flowrt.ErrLocalRunSucceeded):
+					n.sourceMetrics.RecordAttemptLocalSucceededAt(serviceID, stamp)
+				default:
+					n.sourceMetrics.RecordAttemptOutcome(serviceID, runErr)
+				}
 			}
 		})
 		// An operator's manual run is held only to the provider's minimum

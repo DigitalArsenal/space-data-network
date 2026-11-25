@@ -23,11 +23,11 @@ func TestScheduledPullWaitsOutAClosingWindow(t *testing.T) {
 	// A gate that refuses the first `refusals` asks, then allows.
 	gate := func(refusals int32) (RetrievalGate, *atomic.Int32) {
 		calls := &atomic.Int32{}
-		return func() (bool, string) {
+		return func() (bool, string, RetrievalOutcome) {
 			if calls.Add(1) <= refusals {
-				return false, "last attempt 2h59m40s ago is inside the 3h0m0s debounce window"
+				return false, "last attempt 2h59m40s ago is inside the 3h0m0s debounce window", nil
 			}
-			return true, ""
+			return true, "", nil
 		}, calls
 	}
 	// A one-second trigger: the wait runs for up to 50 ms. The flow itself is

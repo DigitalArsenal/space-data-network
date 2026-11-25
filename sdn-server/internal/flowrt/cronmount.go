@@ -86,15 +86,14 @@ type ServiceFlow struct {
 	exclusive      chan struct{}
 	exclusiveGroup string
 
-	statsMu          sync.Mutex
-	retrievalGate    RetrievalGate
-	retrievalOutcome RetrievalOutcome
-	manualRunGate    ManualRunGate
-	startedAt        time.Time
-	timerRunCount    uint64
-	errorCount       uint64
-	lastTimerStatus  string
-	lastInvokeAt     time.Time
+	statsMu         sync.Mutex
+	retrievalGate   RetrievalGate
+	manualRunGate   ManualRunGate
+	startedAt       time.Time
+	timerRunCount   uint64
+	errorCount      uint64
+	lastTimerStatus string
+	lastInvokeAt    time.Time
 
 	schedulePhase SchedulePhase
 	// scheduledIntervals: the interval the plugin manager actually resolved
@@ -353,22 +352,13 @@ func (sf *ServiceFlow) CronMethods() []plugins.CronMethodSpec {
 }
 
 // RetrievalGate reports whether this service may pull from its sources right
-// now, and why not when it may not. It is host egress policy — the same family
-// as the per-host request pacer — expressed against the node's own retrieval
-// ledger. nil means ungated.
-type RetrievalGate func() (allowed bool, reason string)
+// now, why not when it may not, and when admitted returns the outcome sink
+// bound to that specific attempt's stamp (stack issue 1018). nil means ungated.
+type RetrievalGate func() (allowed bool, reason string, finish RetrievalOutcome)
 
 // RetrievalOutcome reports how a gated retrieval ended, so the ledger that
 // counted the attempt as a failure can record WHY it stayed one.
 type RetrievalOutcome func(runErr error)
-
-// SetRetrievalOutcome installs the outcome sink. Only invoked for runs the
-// gate actually admitted — a forced run books no attempt, so it explains none.
-func (sf *ServiceFlow) SetRetrievalOutcome(outcome RetrievalOutcome) {
-	sf.statsMu.Lock()
-	defer sf.statsMu.Unlock()
-	sf.retrievalOutcome = outcome
-}
 
 // ManualRunGate admits an operator's manual run (plugins.WithManualRun) in
 // place of the RetrievalGate: the failure backoff does not hold it, a
@@ -469,7 +459,7 @@ func (sf *ServiceFlow) SetRetrievalGate(gate RetrievalGate) {
 // overrode does not outlive it. A payload of {"force":true} bypasses both
 // gates, booking nothing.
 func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []byte) (out []byte, err error) {
-	attempted := false
+	var finishAttempt RetrievalOutcome
 	var finishManual func(error)
 	if cronInvokeForced(input) {
 		// A forced run bypasses both gates and books no attempt or outcome.
@@ -491,9 +481,9 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 		gate := sf.retrievalGate
 		sf.statsMu.Unlock()
 		if gate != nil {
-			allowed, reason := gate()
+			allowed, reason, finish := gate()
 			if !allowed && plugins.ScheduledRun(ctx) {
-				allowed, reason = sf.waitOutWindow(ctx, method, gate, reason)
+				allowed, reason, finish = sf.waitOutWindow(ctx, method, gate, reason)
 			}
 			if !allowed {
 				log.Infof("Flow service %q: trigger %q skipped (%s)", sf.programID, method, reason)
@@ -509,7 +499,7 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 			// The gate stamped an ATTEMPT, which counts as a failure until an
 			// ingest proves otherwise. Whatever happens next is the only chance
 			// to say why that attempt did or did not pay off.
-			attempted = true
+			finishAttempt = finish
 		}
 	}
 	var releaseSlot func()
@@ -531,13 +521,8 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, input []by
 			}
 			finishManual(diagnosis)
 		}
-		if attempted {
-			sf.statsMu.Lock()
-			outcome := sf.retrievalOutcome
-			sf.statsMu.Unlock()
-			if outcome != nil {
-				outcome(sf.retrievalDiagnosis(err))
-			}
+		if finishAttempt != nil {
+			finishAttempt(sf.retrievalDiagnosis(err))
 		}
 	}()
 	// A panic ends the run as an error, which the deferred bookkeeping above
@@ -585,24 +570,24 @@ var windowRecheck = 15 * time.Second
 // for up to a twentieth of the interval, then pulls or is skipped as before.
 // An unscheduled gated run (first fire, FETCH NOW) never comes through here
 // and is refused at once.
-func (sf *ServiceFlow) waitOutWindow(ctx context.Context, method string, gate RetrievalGate, reason string) (bool, string) {
+func (sf *ServiceFlow) waitOutWindow(ctx context.Context, method string, gate RetrievalGate, reason string) (bool, string, RetrievalOutcome) {
 	deadline := time.Now().Add(sf.ScheduledInterval(method) / 20)
 	for time.Now().Before(deadline) {
 		timer := time.NewTimer(windowRecheck)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return false, reason
+			return false, reason, nil
 		case <-timer.C:
 		}
-		allowed, again := gate()
+		allowed, again, finish := gate()
 		if allowed {
 			log.Infof("Flow service %q: trigger %q waited out its window and runs (%s)", sf.programID, method, reason)
-			return true, again
+			return true, again, finish
 		}
 		reason = again
 	}
-	return false, reason
+	return false, reason, nil
 }
 
 // cronInvokeForced reads the optional {"force":true} escape from a cron
