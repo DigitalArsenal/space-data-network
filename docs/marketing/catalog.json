@@ -251,7 +251,9 @@
         "Markup notes and lines",
         "Rendezvous and proximity charts from element-set history: R/I/C, separation, range rate, plane angle and ROE",
         "Event view from SDS records with models, sensors, maneuvers, lighting and provenance",
-        "Survivability threat scenario: direct-ascent sites with their missiles and published reach, the co-orbital objects in the news and uplink jammers, each figure with its public source; when each satellite of a constellation is in reach, how close the co-orbital objects come and how much contact time a jammer sees"
+        "Survivability threat scenario: direct-ascent sites with their missiles and published reach, the co-orbital objects in the news and uplink jammers, each figure with its public source; when each satellite of a constellation is in reach, how close the co-orbital objects come and how much contact time a jammer sees",
+        "Constellation conjunction and off-nominal recovery decision trades (ANL:DECISIONS)",
+        "3D terrain and structure placement view under the camera (ANL:PLACE 3D)"
       ],
       "standards": [
         "RIC frame"
@@ -573,6 +575,7 @@
         "Prograde, retrograde, radial and plane-change burns",
         "Hohmann transfers and Lambert rendezvous",
         "Phasing, catch-up and formation flying",
+        "Orbit basics delta-v and period trades (MNV:ORBIT BASICS) and element-set RPO characterization (MNV:RPO)",
         "New orbit shown on the globe and gantt"
       ],
       "standards": [
@@ -626,19 +629,20 @@
         "Two-body reference propagator",
         "Ephemeris interpolation",
         "Atmospheric density model",
-        "Circular restricted three-body cislunar propagation",
+        "Circular restricted three-body cislunar propagation and Pumpkyn CR3BP mission design (Tulip, Pumpkin, Halo and NRHO periodic orbits, continuation, invariant manifolds, station-keeping bounds, Lunar South Pole GDOP/PDOP/TDOP and minimum-delta-v/Lambert/low-thrust transfers)",
         "Hypersonic flight conditions"
       ],
       "standards": [
         "CCSDS OMM",
         "CCSDS OEM",
-        "CCSDS OCM"
+        "CCSDS OCM",
+        "SDS TBP"
       ],
       "access": "free",
       "delivery": "sdn-module",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/modules.html",
-      "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0, hypersonics-propagator 0.1.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
+      "evidence": "live modules.pmm com.orbpro.sgp4 1.1.0, com.orbpro.keplerian.reference 1.0.0, com.digitalarsenal.propagator.ephemeris 0.1.1, atmosphere-model 0.1.0, cislunar-propagator 0.1.0 (source updated to propagator/cislunar 0.3.0 with Pumpkyn CR3BP $TBP in modules 6ff3679e), hypersonics-propagator 0.1.1; every modules.pmm row named here is ANONYMOUS (live manifest 2026-10-13)",
       "plan": "free"
     },
     {
@@ -700,6 +704,8 @@
         "Spectrum scan and link margin",
         "Interference from your own transmitters as carrier-to-interference and interference-to-noise",
         "Emitter log of your transmitters and the analyses each took part in",
+        "Ground figure of merit (FSPL, link margin, received power and PFD) painted on the globe and managed on the RF Gantt (RF:GROUND FOM)",
+        "Jammer denied ground footprint (RF:JAM AREA) and link countermeasures (RF:COUNTERMEASURES)",
         "Co-site and aggregate interference modules for your node",
         "Rain, gaseous, cloud and fog, diffraction, terrain and antenna-pattern models"
       ],
@@ -1165,6 +1171,7 @@
       "summary": "Evaluates co-orbital, direct-ascent, RF jammer, GNSS denial, directed-energy, space weather and ISR custody threats against spacecraft states and signed $THP threat lanes over any pluggable propagator.",
       "capabilities": [
         "Co-orbital, direct-ascent, RF jammer, GNSS denial, directed-energy, space weather and ISR custody scoring over pluggable propagators",
+        "Full-catalog active-satellite maneuver reachability screening against any target satellite (e.g. ISS or NORAD ID) with configurable delta-v budget and window",
         "Signed $THP threat profile lanes referencing $OMM, $SIT, $RFB and $SWS records",
         "Deterministic chunked $TMX outputs matching between browser WASM and SDN offload",
         "Analyst what-if parameter templates with explicit provenance tiers"
@@ -1177,7 +1184,9 @@
       ],
       "access": "free",
       "delivery": "sdn-module",
-      "covers": [],
+      "covers": [
+        "ANL:THREAT MATRIX"
+      ],
       "learnMore": "https://spacedatanetwork.org/modules.html",
       "evidence": "space-data-network-modules analysis/threat-matrix (com.digitalarsenal.analysis.threat-matrix); deployment/license/grant-policy.json explicitly sets policy open (ANONYMOUS) for com.digitalarsenal.analysis.threat-matrix; $THP default lanes ship with ACCESS_TIER OPEN",
       "plan": "analysis",
@@ -1222,6 +1231,7 @@
       "capabilities": [
         "AE-8/AP-8 belt flux models published as $RBF records",
         "Single-event upset, total ionizing dose and internal charging rates in $RDE",
+        "Live geomagnetic conditions, Kp/Ap/F10.7 history and storm-drag orbit decay in the SOL console mode",
         "Feeds directly into multi-phenomenology space-weather threat cells"
       ],
       "standards": [
@@ -1231,7 +1241,9 @@
       ],
       "access": "free",
       "delivery": "sdn-module",
-      "covers": [],
+      "covers": [
+        "SOL"
+      ],
       "learnMore": "https://spacedatanetwork.org/modules.html",
       "evidence": "space-data-network-modules analysis/radiation-belts and analysis/radiation-effects (com.digitalarsenal.analysis.radiation-belts, com.digitalarsenal.analysis.radiation-effects); deployment/license/grant-policy.json explicitly sets policy open (ANONYMOUS) for both modules",
       "plan": "analysis",
@@ -2419,6 +2431,18 @@
     "ANL:RPO",
     "ANL:EVENT",
     "ANL:THREATS",
+    "ANL:THREAT MATRIX",
+    "ANL:DECISIONS",
+    "ANL:PLACE 3D",
+    "MNV:ORBIT BASICS",
+    "MNV:RPO",
+    "RF:GROUND FOM",
+    "RF:JAM AREA",
+    "RF:COUNTERMEASURES",
+    "SOL:CONDITIONS",
+    "SOL:KP",
+    "SOL:AP & F10.7",
+    "SOL:STORM DRAG",
     "TRK:COLLECT PLAN",
     "TRK:SAR STRIP"
   ],
