@@ -245,18 +245,21 @@
       "tagline": "RIC box, range, measure, markup, proximity and events",
       "summary": "Box a formation in its leader's radial, in-track and cross-track frame, read live range and range rate, measure on the globe and pin notes.",
       "capabilities": [
-        "RIC box with per-axis fit",
+        "RIC box with per-axis fit, rectilinear/curvilinear coordinates, Earth display modes, 1-sigma wireframe covariance ellipsoids and 1:1 shareable scenario links",
         "Live range and range rate between objects",
         "Click-to-measure distance on the globe",
         "Markup notes and lines",
-        "Rendezvous and proximity charts from element-set history: R/I/C, separation, range rate, plane angle and ROE",
+        "Single- and multi-chaser rendezvous and proximity charts from element-set history in one shared target RIC box: R/I/C, log-scale separation, range rate, plane angle, ROE and detected burn markers",
         "Event view from SDS records with models, sensors, maneuvers, lighting and provenance",
         "Survivability threat scenario: direct-ascent sites with their missiles and published reach, the co-orbital objects in the news and uplink jammers, each figure with its public source; when each satellite of a constellation is in reach, how close the co-orbital objects come and how much contact time a jammer sees",
+        "Multi-phenomenology threat matrix and maneuver reachability screened against per-satellite SDN-AP archive catalog delta-V ($CAT)",
         "Constellation conjunction and off-nominal recovery decision trades (ANL:DECISIONS)",
         "3D terrain and structure placement view under the camera (ANL:PLACE 3D)"
       ],
       "standards": [
-        "RIC frame"
+        "RIC frame",
+        "SDS SCN",
+        "SDS CAT"
       ],
       "access": "free",
       "delivery": "console",
