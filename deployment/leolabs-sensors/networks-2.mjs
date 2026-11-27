@@ -180,6 +180,31 @@ export const ADDITIONS = {
     ],
     "status": "OPERATING",
     "note": "Base operating; MOSS sensor is closed."
+   },
+   {
+    "slug": "socorro-geodss",
+    "name": "GEODSS Socorro (White Sands, Det. 1)",
+    "abbr": "GEODSS Socorro",
+    "type": "OBSERVATION_STATION",
+    "kind": "space surveillance optical telescopes",
+    "country": "840",
+    "lat": 33.8172,
+    "lon": -106.6599,
+    "alt": 1240,
+    "precision": "4 decimals, Stallion Range Center tag at northern White Sands Missile Range near Socorro, NM",
+    "where": "White Sands Missile Range (Stallion Range Center), near Socorro, New Mexico, United States",
+    "cite": {
+     "url": "https://www.airandspaceforces.com/weapons/geodss/",
+     "text": "Air and Space Forces GEODSS: Det. 1 Socorro NM at White Sands Missile Range, three telescopes, operational"
+    },
+    "parties": [
+     {
+      "role": "OPERATOR",
+      "name": "United States Space Force (Det. 1, 15th Space Surveillance Squadron)"
+     }
+    ],
+    "status": "OPERATING",
+    "note": "Operated by Detachment 1, 15th Space Surveillance Squadron."
    }
   ],
   "sensors": [
@@ -333,6 +358,19 @@ export const ADDITIONS = {
      "text": "Wikipedia GEODSS: MOSS transportable 22-inch telescope at Moron 1997-2012, closed"
     },
     "note": "RETIRED."
+   },
+   {
+    "id": "geodss-socorro",
+    "site": "socorro-geodss",
+    "name": "GEODSS Socorro (Det. 1)",
+    "type": "OPTICAL_TELESCOPE",
+    "emission": "PASSIVE",
+    "status": "OPERATING",
+    "cite": {
+     "url": "https://www.airandspaceforces.com/weapons/geodss/",
+     "text": "Air and Space Forces GEODSS: three telescopes per site, Det. 1 Socorro NM, active"
+    },
+    "note": "Deep-space electro-optical surveillance telescope system at White Sands Missile Range."
    }
   ],
   "inorbit": [
@@ -425,13 +463,41 @@ export const ADDITIONS = {
     },
     "verified": "public catalog page: https://keeptrack.space/satellite/51281 (NORAD 51281, 2022-006B)",
     "note": ""
+   },
+   {
+    "id": "sapphire",
+    "name": "Sapphire space surveillance telescope (SSN contributing)",
+    "norad": 39088,
+    "host": "Sapphire",
+    "type": "OPTICAL_TELESCOPE",
+    "emission": "PASSIVE",
+    "apertureM": 0.15,
+    "status": "OPERATING",
+    "cite": {
+     "url": "https://eoportal.org/satellite-missions/sapphire-space-surveillance",
+     "text": "eoPortal, Sapphire; Canadian Department of National Defence contributing sensor to the U.S. Space Surveillance Network"
+    },
+    "verified": "GCAT satcat (planet4589.org, updated 2026 Nov 18 0144:40Z): 39088 Sapphire, launched 2013 Feb 25, owner DRDC/DND, in orbit",
+    "note": "15 cm electro-optical space surveillance telescope contributing observations of 6,000 to 40,000 km deep-space objects to the U.S. Space Surveillance Network."
+   },
+   {
+    "id": "neossat",
+    "name": "NEOSSat space surveillance telescope (HEOSS)",
+    "norad": 39089,
+    "host": "NEOSSat",
+    "type": "OPTICAL_TELESCOPE",
+    "emission": "PASSIVE",
+    "apertureM": 0.15,
+    "status": "OPERATING",
+    "cite": {
+     "url": "https://conference.sdo.esoc.esa.int/proceedings/neosst1/paper/494/NEOSST1-paper494.pdf",
+     "text": "ESA NEOSST1 paper 494 (NEOSSat High Earth Orbit Space Surveillance)"
+    },
+    "verified": "GCAT satcat (planet4589.org, updated 2026 Nov 18 0144:40Z): 39089 NEOSSat, launched 2013 Feb 25, owner CSA/DRDC, in orbit",
+    "note": "15 cm Maksutov telescope in sun-synchronous orbit (785 km) tracking deep-space HEO/GEO objects in HEOSS mode."
    }
   ],
   "leftOut": [
-   [
-    "GEODSS Socorro (White Sands, Det. 1)",
-    "No facility coordinate found; only the White Sands range (region) and a description 30 miles southeast of Socorro town, which is not a tag of the site."
-   ],
    [
     "LRDR at Clear",
     "Wikipedia gives no coordinate for the radar and says nothing confirming a Space Surveillance Network role; it is a missile defense radar. Station tag exists (64.29056, -149.18694) but SSN contribution unverified."

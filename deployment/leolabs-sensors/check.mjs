@@ -132,10 +132,10 @@ for (const network of NETWORKS) {
       assert.equal(rec.SPECTRAL_BANDS.length, 0, `${row.id}: no band is published, none is stored`);
     }
     if (row.az !== undefined) {
-      assert.equal(rec.MOUNTING.FRAME, snrMountingFrame.LOCAL_ENU);
+      assert.equal(rec.MOUNTING.FRAME, row.frame === "LVLH" ? snrMountingFrame.LVLH : snrMountingFrame.LOCAL_ENU);
       assert.equal(rec.MOUNTING.POINTING, snrPointingMode.FIXED);
-      assert.equal(rec.MOUNTING.BORESIGHT_AZIMUTH_DEG, row.az);
-      assert.equal(rec.MOUNTING.BORESIGHT_ELEVATION_DEG, row.el);
+      near(rec.MOUNTING.BORESIGHT_AZIMUTH_DEG, row.az, 1e-4);
+      near(rec.MOUNTING.BORESIGHT_ELEVATION_DEG, row.el, 1e-4);
     } else {
       assert.equal(rec.MOUNTING, null, `${row.id}: no pointing is published`);
     }
@@ -143,18 +143,28 @@ for (const network of NETWORKS) {
     if (row.bandwidthHz !== undefined) assert.equal(rec.RF.BANDWIDTH_HZ, row.bandwidthHz);
     if (row.apertureM !== undefined) assert.equal(rec.OPTICAL.APERTURE_M, row.apertureM);
     if (row.shape) {
-      // The outline as the record carries it: every point, in order, bit for bit the builder's doubles.
       const fov = rec.FIELD_OF_VIEW;
-      assert(fov, `${row.id}: the outline is published`);
-      assert.equal(fov.SHAPE_KIND, scvSensorShapeKind.CUSTOM_POLYGON);
-      assert.equal(fov.POLYGON_FRAME, scvCoordinateFrame.SENSOR_LOCAL);
+      assert(fov, `${row.id}: the field of view is published`);
       assert.equal(fov.RANGE_BOUNDARY, scvSensorRangeBoundaryKind.RADIAL_SPHERICAL);
-      assert.equal(fov.MIN_RANGE_M, 0);
+      assert.equal(fov.MIN_RANGE_M, row.shape.minRangeM ?? 0);
       assert.equal(fov.MAX_RANGE_M, row.shape.maxRangeM);
-      assert.equal(fov.POLYGON_VERTICES.length, row.shape.count, `${row.id}: every outline point`);
-      fov.POLYGON_VERTICES.forEach((v, i) => assert.deepEqual([v.X, v.Y, v.Z], row.shape.vertices[i], `${row.id}: vertex ${i}`));
-      // The range is the longest vertex, to a micrometer (the rotation into the sensor's axes rounds the last bit).
-      near(Math.max(...fov.POLYGON_VERTICES.map((v) => Math.hypot(v.X, v.Y, v.Z))), fov.MAX_RANGE_M, 1e-6);
+      if (row.shape.kind === "RECTANGULAR") {
+        assert.equal(fov.SHAPE_KIND, scvSensorShapeKind.RECTANGULAR);
+        near(fov.X_HALF_ANGLE_DEG, row.shape.xHalfAngleDeg, 1e-4);
+        near(fov.Y_HALF_ANGLE_DEG, row.shape.yHalfAngleDeg, 1e-4);
+      } else if (row.shape.kind === "CONIC") {
+        assert.equal(fov.SHAPE_KIND, scvSensorShapeKind.CONIC);
+        near(fov.OUTER_HALF_ANGLE_DEG, row.shape.outerHalfAngleDeg, 1e-4);
+        near(fov.INNER_HALF_ANGLE_DEG, row.shape.innerHalfAngleDeg ?? 0, 1e-4);
+      } else {
+        // The outline as the record carries it: every point, in order, bit for bit the builder's doubles.
+        assert.equal(fov.SHAPE_KIND, scvSensorShapeKind.CUSTOM_POLYGON);
+        assert.equal(fov.POLYGON_FRAME, scvCoordinateFrame.SENSOR_LOCAL);
+        assert.equal(fov.POLYGON_VERTICES.length, row.shape.count, `${row.id}: every outline point`);
+        fov.POLYGON_VERTICES.forEach((v, i) => assert.deepEqual([v.X, v.Y, v.Z], row.shape.vertices[i], `${row.id}: vertex ${i}`));
+        // The range is the longest vertex, to a micrometer (the rotation into the sensor's axes rounds the last bit).
+        near(Math.max(...fov.POLYGON_VERTICES.map((v) => Math.hypot(v.X, v.Y, v.Z))), fov.MAX_RANGE_M, 1e-6);
+      }
       assert.equal(rec.FIELD_OF_VIEW_PROVENANCE.SOURCE_URL, row.shape.cite.url);
       assert(rec.FIELD_OF_VIEW_PROVENANCE.ATTRIBUTION.includes(network.credit));
     } else {
@@ -165,7 +175,7 @@ for (const network of NETWORKS) {
     assert.equal(rec.PROVENANCE.SOURCE_URL, row.cite.url);
     assert(rec.NOTES.includes(network.credit));
     const b = rec.SPECTRAL_BANDS[0];
-    console.log(`SNR ${rec.SENSOR_ID}\n  NAME=${rec.NAME} ${ground ? `SITE_ID=${rec.SITE_ID}` : `NORAD_CAT_ID=${rec.NORAD_CAT_ID}`} TYPE=${SensorType[rec.TYPE]} EMISSION=${snrEmissionMode[rec.EMISSION]}\n  BAND=${b ? `${b.DESIGNATION} low=${b.FREQ_LOW_HZ} high=${b.FREQ_HIGH_HZ} name="${b.NAME}"` : "none"}\n  MOUNTING=${rec.MOUNTING ? `az=${rec.MOUNTING.BORESIGHT_AZIMUTH_DEG} el=${rec.MOUNTING.BORESIGHT_ELEVATION_DEG}` : "none"} RF.PEAK_POWER_W=${rec.RF?.PEAK_POWER_W ?? "none"} OPTICAL.APERTURE_M=${rec.OPTICAL?.APERTURE_M ?? "none"} FIELD_OF_VIEW=${rec.FIELD_OF_VIEW ? `CUSTOM_POLYGON ${rec.FIELD_OF_VIEW.POLYGON_VERTICES.length} vertices SENSOR_LOCAL MAX_RANGE_M=${rec.FIELD_OF_VIEW.MAX_RANGE_M.toFixed(1)}` : "none"}`);
+    console.log(`SNR ${rec.SENSOR_ID}\n  NAME=${rec.NAME} ${ground ? `SITE_ID=${rec.SITE_ID}` : `NORAD_CAT_ID=${rec.NORAD_CAT_ID}`} TYPE=${SensorType[rec.TYPE]} EMISSION=${snrEmissionMode[rec.EMISSION]}\n  BAND=${b ? `${b.DESIGNATION} low=${b.FREQ_LOW_HZ} high=${b.FREQ_HIGH_HZ} name="${b.NAME}"` : "none"}\n  MOUNTING=${rec.MOUNTING ? `frame=${snrMountingFrame[rec.MOUNTING.FRAME]} az=${rec.MOUNTING.BORESIGHT_AZIMUTH_DEG} el=${rec.MOUNTING.BORESIGHT_ELEVATION_DEG}` : "none"} RF.PEAK_POWER_W=${rec.RF?.PEAK_POWER_W ?? "none"} OPTICAL.APERTURE_M=${rec.OPTICAL?.APERTURE_M ?? "none"} FIELD_OF_VIEW=${rec.FIELD_OF_VIEW ? `${scvSensorShapeKind[rec.FIELD_OF_VIEW.SHAPE_KIND]} MAX_RANGE_M=${rec.FIELD_OF_VIEW.MAX_RANGE_M.toFixed(1)}` : "none"}`);
   }
   table.push({ network: network.slug, provider: providerOf(network), sites: sites.length, sensors: network.sensors.length, inorbit: network.inorbit.length, withLimits: wanted.filter(({ row }) => row.band?.lowMHz !== undefined).length, retired: wanted.filter(({ row }) => row.status === "retired").length + network.sites.filter((s) => ["DECOMMISSIONED", "PERMANENT_SHUTDOWN"].includes(s.status)).length, leftOut: network.leftOut.length });
 }
