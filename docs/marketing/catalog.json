@@ -445,6 +445,7 @@
       "summary": "Plan search volumes, keep watch lists and custody, and compute access and collection plans for the sensors you define, with ephemeris and covariance on the globe.",
       "capabilities": [
         "Catalog-wide overflight and live-over-region screening across the entire catalog for any country, city, region, site or coordinate circle",
+        "SAR imaging-swath coverage and multi-vendor coherent change detection (CCD) geometry from published and attached $SNR sensor records",
         "Search volumes for uncorrelated objects and detection promotion",
         "Tip and cue, watch list, custody and handover planning for your sensors",
         "Propagate ephemeris and show covariance",
@@ -464,12 +465,13 @@
         "TRK"
       ],
       "learnMore": "https://spaceaware.io",
-      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:89-220; modes/trk/surface.ts:100-200; modes/trk/overflight/overflight.ts; modes/trk/export.ts:4",
+      "evidence": "sdn-js/spaceaware-ui/src/orbital-console/modes/modeCards.ts:89-230; modes/trk/surface.ts:100-200; modes/trk/overflight/overflight.ts; modes/trk/sarCoverage/sarCoverage.ts; modes/trk/export.ts:4",
       "plan": "analysis",
       "freeCapabilities": [
-        "Catalog-wide overflight and live-over-region screening across the entire catalog (no account required)"
+        "Catalog-wide overflight and live-over-region screening across the entire catalog (no account required)",
+        "SAR imaging-swath coverage and multi-vendor CCD geometry on published and attached $SNR sensor records (no account required)"
       ],
-      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data, published results and catalog-wide overflight screening remain in Free."
+      "planNote": "The plan covers custom sensor or advanced analysis tools. Free-source data, published results, catalog-wide overflight screening and SAR swath coverage remain in Free."
     },
     {
       "id": "sensor-coverage",
@@ -2452,6 +2454,7 @@
     "SOL:STORM DRAG",
     "SOL:REENTRY",
     "TRK:OVERFLIGHT",
+    "TRK:SAR COVERAGE",
     "TRK:COLLECT PLAN",
     "TRK:SAR STRIP"
   ],
