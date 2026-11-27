@@ -63,6 +63,9 @@ func (s *FlatSQLStore) ResponseArtifactCacheKey(schemaName, schemaVersion, sql s
 // structurally impossible (typed *flatsqlrt.SandboxError), no second store
 // open, no cache interaction.
 func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (*flatsqlrt.RawStream, error) {
+	if err := s.checkSandboxedSQLPrivate(sql, params...); err != nil {
+		return nil, err
+	}
 	if s.rb != nil {
 		return s.rb.QuerySandboxedStream(sql, caps, params...)
 	}
@@ -133,6 +136,9 @@ func (s *FlatSQLStore) QuerySandboxedStream(sql string, caps flatsqlrt.SandboxCa
 // three, so the body is at most 3x the cap and only for input that was already
 // hostile.
 func (s *FlatSQLStore) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (payload []byte, rows, cols int, err error) {
+	if err := s.checkSandboxedSQLPrivate(sql, params...); err != nil {
+		return nil, 0, 0, err
+	}
 	if s.rb != nil {
 		return s.rb.QuerySandboxedJSON(sql, caps, params...)
 	}
@@ -225,7 +231,11 @@ type QuerySurfaceTable struct {
 //     a caller can get rows out of.
 func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 	if s.rb != nil {
-		return s.rb.PublicQuerySurface()
+		surface, err := s.rb.PublicQuerySurface()
+		if err != nil {
+			return nil, err
+		}
+		return s.filterPublicQuerySurface(surface), nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -294,7 +304,7 @@ func (s *FlatSQLStore) PublicQuerySurface() ([]QuerySurfaceTable, error) {
 			})
 		}
 	}
-	return surface, nil
+	return s.filterPublicQuerySurface(surface), nil
 }
 
 // countEngineRelation returns the resident record count, and SKIPS the count

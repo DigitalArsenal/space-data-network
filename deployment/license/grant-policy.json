@@ -12,7 +12,14 @@
     "policy": "subscription",
     "required_plans": ["analysis", "ai", "spaceedge", "pro", "enterprise"],
     "fallback_signal": "browser-local",
-    "denied_modules": ["licensing", "ailog", "pmm"],
+    "denied_modules": [
+      "licensing",
+      "ailog",
+      "pmm",
+      "com.digitalarsenal.private.ai-session-collector",
+      "com.digitalarsenal.flows.ai-session-collector",
+      "com.digitalarsenal.flows.ai-session-backup"
+    ],
     "allowed_hydration_schemas": ["THP.fbs", "CDM.fbs", "SIT.fbs", "SWS.fbs", "RBF.fbs", "RDE.fbs"]
   },
 

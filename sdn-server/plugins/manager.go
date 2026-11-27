@@ -436,6 +436,7 @@ type RuntimeModuleEntry struct {
 	Catalog        *RuntimeModuleCatalog              `json:"catalog,omitempty"`
 	InputValues    []RuntimeModuleInputValue          `json:"inputValues,omitempty"`
 	RestartPending bool                               `json:"restartPending,omitempty"`
+	Private        bool                               `json:"private,omitempty"`
 	CommandHistory []RuntimeModuleCommandHistoryEntry `json:"commandHistory,omitempty"`
 }
 
@@ -978,6 +979,9 @@ func (m *Manager) Manifest() []PluginManifestEntry {
 	registered := m.registeredPlugins()
 	entries := make([]PluginManifestEntry, 0, len(registered))
 	for _, p := range registered {
+		if pp, ok := p.(interface{ IsPrivate() bool }); ok && pp.IsPrivate() {
+			continue
+		}
 		status, statusMessage := m.pluginStatus(p.ID())
 		entry := PluginManifestEntry{
 			ID:            p.ID(),
@@ -1023,6 +1027,9 @@ func (m *Manager) RuntimeSnapshot() RuntimeSnapshot {
 		}
 		if dp, ok := p.(interface{ Description() string }); ok {
 			entry.Description = dp.Description()
+		}
+		if pp, ok := p.(interface{ IsPrivate() bool }); ok {
+			entry.Private = pp.IsPrivate()
 		}
 		if up, ok := p.(UIProvider); ok {
 			desc := up.UIDescriptor()

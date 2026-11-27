@@ -53,6 +53,10 @@ func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
 		return
 	}
+	if h.store.IsPrivateSchema(req.Schema) {
+		WriteErrorFrame(w, http.StatusNotFound, "not_found", "schema not found", 0)
+		return
+	}
 
 	page, records, err := datasync.ScanPage(h.store, req, datasync.MaxSyncChunkLimit)
 	if err != nil {

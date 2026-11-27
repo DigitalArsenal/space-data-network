@@ -3288,6 +3288,9 @@ func (c *sandboxRowCollector) add(row []format2.Cell) error {
 // and answers typed rows. caps.MaxRows (default 1000) and caps.MaxBytes
 // (default 4 MiB) truncate; caps.Timeout (default 5 s) bounds the statement.
 func (s *FlatSQLStore) QuerySandboxedRows(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (*SandboxRows, error) {
+	if err := s.checkSandboxedSQLPrivate(sql, params...); err != nil {
+		return nil, err
+	}
 	if caps.MaxRows == 0 || caps.MaxRows > 1000 {
 		caps.MaxRows = 1000
 	}

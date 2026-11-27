@@ -133,6 +133,7 @@ type MountedFlow struct {
 	mountPath   string
 	apiDoc      *FlowAPIDoc
 	flowVersion string
+	private     bool
 
 	triggerIndex  uint32
 	triggerPortID string
@@ -1317,6 +1318,7 @@ func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps Flow
 			return fail(fmt.Errorf("mount %q: %w", mount.Path, err))
 		}
 		mf.mountPath = mount.Path
+		mf.private = mount.Private
 		mux.Handle(mount.Path, mf)
 		// A trailing-slash mount is a Go mux SUBTREE: without an exact-path
 		// alias, GET on the bare path (e.g. /api/v1/peers for the
@@ -1374,6 +1376,7 @@ func RegisterLazyFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps 
 		mountDeps.NodeCtx = mountNodeContext(deps.NodeCtx, mount.Config)
 		mf := newLazyMountedFlow(mount.Flow, mountDeps)
 		mf.mountPath = mount.Path
+		mf.private = mount.Private
 		mux.Handle(mount.Path, mf)
 		if trimmed := strings.TrimSuffix(mount.Path, "/"); trimmed != "" && trimmed != mount.Path {
 			registerMountAlias(mux, trimmed, mf)

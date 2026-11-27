@@ -557,6 +557,9 @@ func (h *DataQueryHandler) handleResolvedSources(w http.ResponseWriter, r *http.
 	unresolvedPeers := map[string]bool{}
 	rows := make([]resolvedSourceRow, 0, len(summary.Sources))
 	for _, src := range summary.Sources {
+		if h.store.IsPrivateSchema(src.SchemaName) {
+			continue
+		}
 		sourceTag := src.SourceName
 		if sourceTag == "" {
 			sourceTag = src.ProviderID

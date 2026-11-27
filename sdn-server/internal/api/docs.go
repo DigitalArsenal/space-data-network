@@ -209,6 +209,9 @@ func GenerateOpenAPI(opts DocsHandlerOptions) ([]byte, error) {
 
 	// 1. REAL: operations from the mounted flows' api extensions.
 	for _, mf := range opts.Flows {
+		if priv, ok := mf.(interface{ IsPrivate() bool }); ok && priv.IsPrivate() {
+			continue
+		}
 		doc := mf.APIDoc()
 		if doc == nil {
 			continue
