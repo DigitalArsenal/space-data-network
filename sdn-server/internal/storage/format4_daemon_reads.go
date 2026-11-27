@@ -1020,6 +1020,46 @@ func (b format4Backend) QueryRecentRecords(schemaName string, limit int) ([]*Rec
 	return out, nil
 }
 
+// QueryRecentDatasetPublicationPNMs returns the newest PNM.fbs records whose
+// FILE_ID (COL1) identifies a dataset publication ("%.fbs%"), ordered newest
+// first across all partitions without tagged-before-untagged bias.
+func (b format4Backend) QueryRecentDatasetPublicationPNMs(limit int) ([]*Record, error) {
+	if err := b.closed(); err != nil {
+		return nil, err
+	}
+	typ, err := f4Type("PNM.fbs")
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 250000 {
+		limit = 250000
+	}
+	recs, err := b.d.api().Scan(b.d.ctx, format4.Query{
+		Type:    typ,
+		Order:   format4.OrderSeqDesc,
+		Preds:   []format4.Pred{f4Pred(format4.FieldCol1, format4.OpLike, format2.Text("%.fbs%"))},
+		Limit:   int64(limit),
+		Hydrate: true,
+	})
+	if errors.Is(err, format4.ErrNoType) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("recent dataset publication PNM query failed: %w", err)
+	}
+	out, err := b.f4Records("PNM.fbs", recs, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range out {
+		r.RowID = 0
+	}
+	return out, nil
+}
+
 // f4FullTableCursorKey names the one cursor a format-4 full-table page
 // keeps: the seq it continues below (every copy of a type shares one seq).
 const f4FullTableCursorKey = "seq"

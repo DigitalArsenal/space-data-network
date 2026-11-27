@@ -174,7 +174,7 @@ func openDatasetPNMStore() (*storage.FlatSQLStore, error) {
 }
 
 func listDatasetPNMs(store *storage.FlatSQLStore, limit int, schemaFilter, fileIDContains string) ([]datasetPNMListEntry, error) {
-	records, err := store.QueryRecentRecords("PNM.fbs", limit)
+	records, err := store.QueryRecentDatasetPublicationPNMs(limit)
 	if err != nil {
 		return nil, fmt.Errorf("query recent PNM records: %w", err)
 	}
@@ -207,7 +207,7 @@ func listDatasetPNMs(store *storage.FlatSQLStore, limit int, schemaFilter, fileI
 }
 
 func findDatasetPNM(store *storage.FlatSQLStore, limit int, exactFileID, fileIDContains string) (*storage.Record, error) {
-	records, err := store.QueryRecentRecords("PNM.fbs", limit)
+	records, err := store.QueryRecentDatasetPublicationPNMs(limit)
 	if err != nil {
 		return nil, fmt.Errorf("query recent PNM records: %w", err)
 	}
