@@ -13,20 +13,38 @@ import { pathToFileURL } from "node:url";
 import { LEOLABS_NETWORK } from "./leolabs-network.mjs";
 import { NETWORKS as OTHER_NETWORKS } from "./networks.mjs";
 import { ADDITIONS, NEW_NETWORKS } from "./networks-2.mjs";
+import { ssnShapeOf } from "./ssn-shapes.mjs";
 
 // Round 1 is the publication of 2026-11-18 (11 networks). Round 2 (2026-11-19) adds rows to four of those networks and adds new networks.
 // A row's `round` says which batch carried it to the node: a lane is appended to, never resent, so round 2 posts only round-2 rows.
 const ROUND_2_RETRIEVED_AT = "2026-11-19T00:00:00.000Z";
 const inRound2 = (row) => ({ ...row, round: 2, cite: { retrievedAt: ROUND_2_RETRIEVED_AT, ...row.cite } });
+const withSsnShape = (row) => {
+  const shape = ssnShapeOf(row.id);
+  if (!shape) return row;
+  return {
+    ...row,
+    az: shape.azDeg,
+    el: shape.elDeg,
+    shape,
+    note: `${row.note ? `${row.note} ` : ""}${shape.cite.notes}`.trim(),
+  };
+};
 const withAdditions = (network) => {
   const more = ADDITIONS[network.slug];
-  if (!more) return network;
+  const merged = !more
+    ? network
+    : {
+        ...network,
+        sites: [...network.sites, ...(more.sites ?? []).map(inRound2)],
+        sensors: [...network.sensors, ...(more.sensors ?? []).map(inRound2)],
+        inorbit: [...network.inorbit, ...(more.inorbit ?? []).map(inRound2)],
+        leftOut: [...network.leftOut.filter(([what]) => !(more.nowPublished ?? []).includes(what)), ...(more.leftOut ?? [])],
+      };
+  if (merged.slug !== "ussf-ssn") return merged;
   return {
-    ...network,
-    sites: [...network.sites, ...(more.sites ?? []).map(inRound2)],
-    sensors: [...network.sensors, ...(more.sensors ?? []).map(inRound2)],
-    inorbit: [...network.inorbit, ...(more.inorbit ?? []).map(inRound2)],
-    leftOut: [...network.leftOut.filter(([what]) => !(more.nowPublished ?? []).includes(what)), ...(more.leftOut ?? [])],
+    ...merged,
+    sensors: merged.sensors.map(withSsnShape),
   };
 };
 const known = new Set([LEOLABS_NETWORK, ...OTHER_NETWORKS].map((network) => network.slug));
@@ -37,7 +55,11 @@ export const NETWORKS = [...[LEOLABS_NETWORK, ...OTHER_NETWORKS].map(withAdditio
 export const roundOf = (row) => row.round ?? 1;
 // Round 3 (2026-11-20) adds no row: it sends a lane again, whole, because its records changed. The LeoLabs radars now carry
 // their coverage outline (leolabs-shapes.mjs); their twelve $SNR records, same SENSOR_IDs, go out as the lane's next batch.
-export const RESENT = { 3: [{ network: "leolabs", schema: "SNR.fbs" }] };
+// Round 4 (2026-11-27) resends ussf-ssn $SNR records enriched with empirical TLE/OMM epoch-position shapes and ranges (ssn-shapes.mjs).
+export const RESENT = {
+  3: [{ network: "leolabs", schema: "SNR.fbs" }],
+  4: [{ network: "ussf-ssn", schema: "SNR.fbs" }],
+};
 export const providerOf = (network) => `sdn-ssa-${network.slug}`;
 // The source name carries the network, so the console's SOURCES list reads "ussf-ssn-sites · 12" and not nine lanes called "sites".
 export const SITE_SOURCE = (network) => `${network.slug}-sites`;
