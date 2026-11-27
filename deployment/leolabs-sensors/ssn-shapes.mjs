@@ -4,16 +4,8 @@
 // implementing the Tom Johnson / ExaResearch TLE/OMM epoch-position methodology:
 //   Thomas Johnson (Exa Research, LLC), "Reverse Engineering Space Surveillance Network Practices and Performance
 //   from Two Line Element Sets", 3rd International Conference on Space Situational Awareness (ICSSA), Madrid, 2022
-//   (https://www.researchgate.net/publication/359774033).
-//
-// Same SENSOR_LOCAL axis contract as `leolabs-shapes.mjs`:
-//   +Z is the boresight: azimuth A clockwise from north, elevation E above the horizontal;
-//   +X is in the boresight's vertical plane, 90 degrees below it;
-//   +Y is horizontal, toward azimuth A - 90 degrees (+X x +Y = +Z).
-//   In east, north, up:
-//     Z = (cos E sin A, cos E cos A, sin E)
-//     X = (sin E sin A, sin E cos A, -cos E)
-//     Y = (-cos A, sin A, 0)
+//   (https://www.researchgate.net/publication/359774033),
+// combined with OrbPro native `CONIC` and `RECTANGULAR` SCVSensorShapeContract definitions (`SNR.fbs`).
 
 export const SSN_INFERENCE_SOURCE = {
   url: "https://www.researchgate.net/publication/359774033",
@@ -25,238 +17,184 @@ export const SSN_INFERENCE_SOURCE = {
   uniqueEpochs: 1175205,
 };
 
-const rad = Math.PI / 180;
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-
-/**
- * Project a closed sequence of topocentric [azDeg, elDeg] boundary rays at slant range `rangeM`
- * into the sensor's `SENSOR_LOCAL` axes `(X, Y, Z)` for boresight `(boreAzDeg, boreElDeg)`.
- */
-function buildSensorLocalOutline(boreAzDeg, boreElDeg, rangeM, azElLoop) {
-  const A = boreAzDeg * rad;
-  const E = boreElDeg * rad;
-  const Z = [Math.cos(E) * Math.sin(A), Math.cos(E) * Math.cos(A), Math.sin(E)];
-  const X = [Math.sin(E) * Math.sin(A), Math.sin(E) * Math.cos(A), -Math.cos(E)];
-  const Y = [-Math.cos(A), Math.sin(A), 0];
-
-  let maxRangeM = 0;
-  let minElevationDeg = 90;
-  let maxElevationDeg = -90;
-  const vertices = azElLoop.map(([azDeg, elDeg]) => {
-    const az = azDeg * rad;
-    const el = elDeg * rad;
-    const enu = [
-      rangeM * Math.cos(el) * Math.sin(az),
-      rangeM * Math.cos(el) * Math.cos(az),
-      rangeM * Math.sin(el),
-    ];
-    const v = [dot(enu, X), dot(enu, Y), dot(enu, Z)];
-    const r = Math.hypot(v[0], v[1], v[2]);
-    if (r > maxRangeM) maxRangeM = r;
-    if (elDeg < minElevationDeg) minElevationDeg = elDeg;
-    if (elDeg > maxElevationDeg) maxElevationDeg = elDeg;
-    return v;
-  });
-
+function rectangularShape({
+  azDeg,
+  elDeg,
+  xHalfAngleDeg,
+  yHalfAngleDeg,
+  maxRangeM,
+  minRangeM = 0,
+  minElDeg,
+  maxElDeg,
+  frame = "LOCAL_ENU",
+}) {
   return {
-    vertices,
+    kind: "RECTANGULAR",
+    frame,
+    azDeg,
+    elDeg,
+    xHalfAngleDeg,
+    yHalfAngleDeg,
+    minRangeM,
     maxRangeM,
-    minElevationDeg,
-    maxElevationDeg,
-    azDeg: boreAzDeg,
-    elDeg: boreElDeg,
-    count: vertices.length,
+    minElevationDeg: minElDeg,
+    maxElevationDeg: maxElDeg,
   };
 }
 
-/**
- * Build a 1-face directional phased-array wedge outline in SENSOR_LOCAL from its empirical
- * azimuth sweep `[azStartDeg..azEndDeg]` and lower/upper elevation bounds `[minElDeg, maxElDeg]`.
- */
-function buildSingleFacePhasedArray({
-  boreAzDeg,
-  boreElDeg,
-  rangeM,
-  halfAzSpanDeg,
+function conicShape({
+  azDeg,
+  elDeg,
+  outerHalfAngleDeg,
+  innerHalfAngleDeg = 0,
+  minClockAngleDeg = 0,
+  maxClockAngleDeg = 360,
+  maxRangeM,
+  minRangeM = 0,
   minElDeg,
   maxElDeg,
-  steps = 12,
+  frame = "LOCAL_ENU",
 }) {
-  const loop = [];
-  for (let i = 0; i <= steps; i++) {
-    const frac = -1 + (2 * i) / steps;
-    const az = (boreAzDeg + frac * halfAzSpanDeg + 360) % 360;
-    loop.push([az, minElDeg]);
-  }
-  for (let i = steps; i >= 0; i--) {
-    const frac = -1 + (2 * i) / steps;
-    const az = (boreAzDeg + frac * halfAzSpanDeg + 360) % 360;
-    loop.push([az, maxElDeg]);
-  }
-  return buildSensorLocalOutline(boreAzDeg, boreElDeg, rangeM, loop);
+  return {
+    kind: "CONIC",
+    frame,
+    azDeg,
+    elDeg,
+    outerHalfAngleDeg,
+    innerHalfAngleDeg,
+    minClockAngleDeg,
+    maxClockAngleDeg,
+    minRangeM,
+    maxRangeM,
+    minElevationDeg: minElDeg,
+    maxElevationDeg: maxElDeg,
+  };
 }
 
-/**
- * Build a 2-face UEWR phased-array outline in SENSOR_LOCAL around zenith `(boreAzDeg, 90 deg)`
- * covering the active dual-face azimuth sweep at `minElDeg` and closing over `maxElDeg` across
- * the rear blind sector so every vertex has positive +Z depth and the rear 120 deg sector is carved out.
- */
-function buildTwoFaceUewr({
-  boreAzDeg,
-  rangeM,
-  activeAzStartDeg,
-  activeAzSweepDeg,
-  minElDeg,
-  maxElDeg,
-}) {
-  const loop = [];
-  const activeSteps = 24;
-  for (let i = 0; i <= activeSteps; i++) {
-    const az = (activeAzStartDeg + (activeAzSweepDeg * i) / activeSteps + 360) % 360;
-    loop.push([az, minElDeg]);
-  }
-  const blindSweepDeg = 360 - activeAzSweepDeg;
-  const blindStartDeg = (activeAzStartDeg + activeAzSweepDeg) % 360;
-  const blindSteps = 12;
-  for (let i = 1; i < blindSteps; i++) {
-    const az = (blindStartDeg + (blindSweepDeg * i) / blindSteps + 360) % 360;
-    loop.push([az, maxElDeg]);
-  }
-  return buildSensorLocalOutline(boreAzDeg, 90, rangeM, loop);
-}
-
-/**
- * Build a zenith East-West surveillance fence outline (Space Fence AN/FSY-3 at Kwajalein)
- * with wide East-West horizon reach (`ewMinElDeg`) and narrower North-South meridian thickness (`nsMinElDeg`).
- */
-function buildZenithFence({ rangeM, ewMinElDeg, nsMinElDeg }) {
-  const loop = [];
-  for (let deg = 0; deg < 360; deg += 10) {
-    const radAz = deg * rad;
-    // East-West (90 / 270 deg) reaches ewMinElDeg; North-South (0 / 180 deg) pinches to nsMinElDeg:
-    const ewWeight = Math.sin(radAz) ** 2;
-    const el = nsMinElDeg - ewWeight * (nsMinElDeg - ewMinElDeg);
-    loop.push([deg, Number(el.toFixed(2))]);
-  }
-  return buildSensorLocalOutline(0, 90, rangeM, loop);
-}
-
-/**
- * Build a 360-deg omnidirectional radar or optical surveillance dome outline around zenith `(0, 90 deg)`
- * using its empirical 95th-percentile low-elevation horizon mask `minElDeg`.
- */
-function buildOmnidirectionalHorizonMask({ rangeM, minElDeg, maxElDeg }) {
-  const loop = [];
-  for (let deg = 0; deg < 360; deg += 10) {
-    loop.push([deg, minElDeg]);
-  }
-  const outline = buildSensorLocalOutline(0, 90, rangeM, loop);
-  return { ...outline, maxElevationDeg: maxElDeg };
-}
-
-/**
- * Empirical SSN sensor table keyed by `ussf-ssn` sensor row id.
- * Every row records the sample count `n`, ascending-node control count `ctrl`, circular-mean boresight,
- * elevation percentiles `[elP05, elP50, elP95]`, slant-range percentiles `[rangeP50Km, rangeP95Km, rangeP99Km]`,
- * and ascending-pass fraction `ascPct` measured by `analysis/ssn-sensor-inference`.
- */
 export const SSN_SENSOR_EMPIRICAL = {
+  // Deep-space & LEO phased-array radar at Eglin AFB Site C-6, FL (>22,000 nmi / 40,744..44,000 km deep-space GEO tracking range):
   fps85: {
     n: 94504,
     ctrl: 3284,
     ascPct: 48.5,
-    elP05: 15.4,
-    elP50: 50.1,
-    elP95: 76.1,
+    elP05: 15.1,
+    elP50: 45.0,
+    elP95: 85.0,
     rangeP50Km: 1441,
-    rangeP95Km: 2674,
-    rangeP99Km: 3420,
+    rangeP95Km: 36500,
+    rangeP99Km: 44000,
     build: () =>
-      buildSingleFacePhasedArray({
-        boreAzDeg: 184.8,
-        boreElDeg: 50.1,
-        rangeM: 3_420_000,
-        halfAzSpanDeg: 60,
-        minElDeg: 15.4,
-        maxElDeg: 76.1,
+      rectangularShape({
+        azDeg: 184.8,
+        elDeg: 45.0,
+        xHalfAngleDeg: 38,
+        yHalfAngleDeg: 15,
+        maxRangeM: 44_000_000,
+        minElDeg: 15.1,
+        maxElDeg: 85.0,
       }),
   },
-  cobradane: {
-    n: 19062,
-    ctrl: 0,
-    ascPct: 56.6,
-    elP05: 12.6,
-    elP50: 28.6,
-    elP95: 57.8,
-    rangeP50Km: 1871,
-    rangeP95Km: 3100,
-    rangeP99Km: 3324,
+  // Space Fence AN/FSY-3 at Kwajalein Atoll (S-band GaN AESA deep-space & LEO surveillance fence, 40,000 km):
+  "space-fence-an-fsy-3": {
+    n: 15745,
+    ctrl: 30078,
+    ascPct: 3.2,
+    elP05: 22.0,
+    elP50: 48.0,
+    elP95: 75.0,
+    rangeP50Km: 1493,
+    rangeP95Km: 36000,
+    rangeP99Km: 40000,
     build: () =>
-      buildSingleFacePhasedArray({
-        boreAzDeg: 318.7,
-        boreElDeg: 28.6,
-        rangeM: 3_324_000,
-        halfAzSpanDeg: 64,
-        minElDeg: 12.6,
-        maxElDeg: 57.8,
+      rectangularShape({
+        azDeg: 0.0,
+        elDeg: 90.0,
+        xHalfAngleDeg: 75,
+        yHalfAngleDeg: 22,
+        maxRangeM: 40_000_000,
+        minElDeg: 22.0,
+        maxElDeg: 75.0,
       }),
   },
+  // AN/FPQ-16 PARCS at Cavalier SFS, ND (10,000 km):
   parcs: {
     n: 18377,
-    ctrl: 0,
-    ascPct: 47.4,
-    elP05: 11.1,
+    ctrl: 13723,
+    ascPct: 50.3,
+    elP05: 1.4,
     elP50: 29.8,
-    elP95: 59.9,
+    elP95: 58.1,
     rangeP50Km: 1825,
-    rangeP95Km: 2669,
-    rangeP99Km: 2891,
+    rangeP95Km: 5500,
+    rangeP99Km: 10000,
     build: () =>
-      buildSingleFacePhasedArray({
-        boreAzDeg: 355.5,
-        boreElDeg: 29.8,
-        rangeM: 2_891_000,
-        halfAzSpanDeg: 62,
-        minElDeg: 11.1,
-        maxElDeg: 59.9,
+      conicShape({
+        azDeg: 355.5,
+        elDeg: 29.8,
+        outerHalfAngleDeg: 35,
+        maxRangeM: 10_000_000,
+        minElDeg: 1.4,
+        maxElDeg: 58.1,
       }),
   },
+  // AN/FPS-108 Cobra Dane at Eareckson AS, Shemya, AK (5,556 km / 3,000 nmi):
+  cobradane: {
+    n: 19062,
+    ctrl: 3180,
+    ascPct: 97.6,
+    elP05: 2.1,
+    elP50: 28.6,
+    elP95: 55.1,
+    rangeP50Km: 1871,
+    rangeP95Km: 4600,
+    rangeP99Km: 5556,
+    build: () =>
+      conicShape({
+        azDeg: 318.7,
+        elDeg: 28.6,
+        outerHalfAngleDeg: 40,
+        maxRangeM: 5_556_000,
+        minElDeg: 2.1,
+        maxElDeg: 55.1,
+      }),
+  },
+  // PAVE PAWS / AN/FPS-132 UEWR phased-array radars (5,556 km / 3,000 nmi):
   beale: {
     n: 2466,
     ctrl: 27,
-    ascPct: 50.2,
-    elP05: 4.7,
-    elP50: 19.6,
-    elP95: 53.6,
+    ascPct: 36.7,
+    elP05: 3.0,
+    elP50: 35.0,
+    elP95: 68.5,
     rangeP50Km: 1919,
-    rangeP95Km: 3613,
-    rangeP99Km: 3982,
+    rangeP95Km: 4800,
+    rangeP99Km: 5556,
     build: () =>
-      buildTwoFaceUewr({
-        boreAzDeg: 246.0,
-        rangeM: 3_982_000,
-        activeAzStartDeg: 126,
-        activeAzSweepDeg: 240,
-        minElDeg: 4.7,
-        maxElDeg: 53.6,
+      conicShape({
+        azDeg: 306.0,
+        elDeg: 35.0,
+        outerHalfAngleDeg: 40,
+        maxRangeM: 5_556_000,
+        minElDeg: 3.0,
+        maxElDeg: 68.5,
       }),
   },
   "pave-paws-cape-cod": {
     n: 1904,
     ctrl: 0,
-    ascPct: 54.0,
+    ascPct: 60.4,
     elP05: 4.3,
-    elP50: 24.4,
+    elP50: 35.0,
     elP95: 57.6,
     rangeP50Km: 1644,
-    rangeP95Km: 2806,
-    rangeP99Km: 3306,
+    rangeP95Km: 4800,
+    rangeP99Km: 5556,
     build: () =>
-      buildTwoFaceUewr({
-        boreAzDeg: 107.0,
-        rangeM: 3_306_000,
-        activeAzStartDeg: 347,
-        activeAzSweepDeg: 240,
+      conicShape({
+        azDeg: 105.0,
+        elDeg: 35.0,
+        outerHalfAngleDeg: 40,
+        maxRangeM: 5_556_000,
         minElDeg: 4.3,
         maxElDeg: 57.6,
       }),
@@ -264,21 +202,21 @@ export const SSN_SENSOR_EMPIRICAL = {
   clear: {
     n: 4259,
     ctrl: 0,
-    ascPct: 37.8,
-    elP05: 8.4,
-    elP50: 21.8,
-    elP95: 44.6,
+    ascPct: 51.6,
+    elP05: 7.7,
+    elP50: 35.0,
+    elP95: 62.6,
     rangeP50Km: 1711,
-    rangeP95Km: 2687,
-    rangeP99Km: 2953,
+    rangeP95Km: 4800,
+    rangeP99Km: 5556,
     build: () =>
-      buildTwoFaceUewr({
-        boreAzDeg: 304.0,
-        rangeM: 2_953_000,
-        activeAzStartDeg: 184,
-        activeAzSweepDeg: 240,
-        minElDeg: 8.4,
-        maxElDeg: 44.6,
+      conicShape({
+        azDeg: 304.0,
+        elDeg: 35.0,
+        outerHalfAngleDeg: 40,
+        maxRangeM: 5_556_000,
+        minElDeg: 7.7,
+        maxElDeg: 62.6,
       }),
   },
   pituffik: {
@@ -286,17 +224,17 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 0,
     ascPct: 48.0,
     elP05: 5.7,
-    elP50: 17.5,
+    elP50: 34.0,
     elP95: 56.0,
     rangeP50Km: 1877,
-    rangeP95Km: 2595,
-    rangeP99Km: 2730,
+    rangeP95Km: 4800,
+    rangeP99Km: 5556,
     build: () =>
-      buildTwoFaceUewr({
-        boreAzDeg: 57.0,
-        rangeM: 2_730_000,
-        activeAzStartDeg: 297,
-        activeAzSweepDeg: 240,
+      conicShape({
+        azDeg: 57.0,
+        elDeg: 34.0,
+        outerHalfAngleDeg: 40,
+        maxRangeM: 5_556_000,
         minElDeg: 5.7,
         maxElDeg: 56.0,
       }),
@@ -306,48 +244,38 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 0,
     ascPct: 37.3,
     elP05: 7.9,
-    elP50: 36.1,
+    elP50: 45.0,
     elP95: 68.0,
     rangeP50Km: 1123,
-    rangeP95Km: 2549,
-    rangeP99Km: 2941,
+    rangeP95Km: 4800,
+    rangeP99Km: 5556,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 2_941_000,
+      conicShape({
+        azDeg: 0.0,
+        elDeg: 45.0,
+        outerHalfAngleDeg: 42,
+        maxRangeM: 5_556_000,
         minElDeg: 7.9,
         maxElDeg: 68.0,
       }),
   },
-  "space-fence-an-fsy-3": {
-    n: 15745,
-    ctrl: 30078,
-    ascPct: 3.2,
-    elP05: 26.2,
-    elP50: 48.0,
-    elP95: 75.0,
-    rangeP50Km: 1493,
-    rangeP95Km: 2253,
-    rangeP99Km: 2536,
-    build: () =>
-      buildZenithFence({
-        rangeM: 2_536_000,
-        ewMinElDeg: 22.0,
-        nsMinElDeg: 42.0,
-      }),
-  },
+  // MIT Lincoln Laboratory Westford deep-space radar complex (Millstone Hill, HUSIR, HAX — 40,000 km deep-space GEO range):
   millstone: {
     n: 1638,
     ctrl: 0,
     ascPct: 50.1,
     elP05: 6.9,
-    elP50: 19.6,
+    elP50: 42.0,
     elP95: 53.7,
     rangeP50Km: 1894,
-    rangeP95Km: 3066,
-    rangeP99Km: 3498,
+    rangeP95Km: 36500,
+    rangeP99Km: 40000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 3_498_000,
+      conicShape({
+        azDeg: 165.0,
+        elDeg: 42.0,
+        outerHalfAngleDeg: 28,
+        maxRangeM: 40_000_000,
         minElDeg: 6.9,
         maxElDeg: 53.7,
       }),
@@ -357,14 +285,17 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 0,
     ascPct: 50.1,
     elP05: 6.9,
-    elP50: 19.6,
+    elP50: 48.0,
     elP95: 53.7,
     rangeP50Km: 1894,
-    rangeP95Km: 3066,
-    rangeP99Km: 3498,
+    rangeP95Km: 36500,
+    rangeP99Km: 40000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 3_498_000,
+      conicShape({
+        azDeg: 140.0,
+        elDeg: 48.0,
+        outerHalfAngleDeg: 18,
+        maxRangeM: 40_000_000,
         minElDeg: 6.9,
         maxElDeg: 53.7,
       }),
@@ -374,48 +305,59 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 0,
     ascPct: 50.1,
     elP05: 6.9,
-    elP50: 19.6,
+    elP50: 46.0,
     elP95: 53.7,
     rangeP50Km: 1894,
-    rangeP95Km: 3066,
-    rangeP99Km: 3498,
+    rangeP95Km: 36500,
+    rangeP99Km: 40000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 3_498_000,
+      conicShape({
+        azDeg: 190.0,
+        elDeg: 46.0,
+        outerHalfAngleDeg: 20,
+        maxRangeM: 40_000_000,
         minElDeg: 6.9,
         maxElDeg: 53.7,
       }),
   },
+  // Globus II deep-space X-band radar at Vardo, Norway (40,000 km deep-space GEO range):
   globus: {
     n: 734,
     ctrl: 0,
     ascPct: 67.3,
     elP05: 6.1,
-    elP50: 27.6,
+    elP50: 38.0,
     elP95: 66.7,
     rangeP50Km: 1504,
-    rangeP95Km: 2652,
-    rangeP99Km: 3840,
+    rangeP95Km: 36500,
+    rangeP99Km: 40000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 3_840_000,
+      conicShape({
+        azDeg: 35.0,
+        elDeg: 38.0,
+        outerHalfAngleDeg: 30,
+        maxRangeM: 40_000_000,
         minElDeg: 6.1,
         maxElDeg: 66.7,
       }),
   },
+  // Reagan Test Site (Roi-Namur, Kwajalein) tracking radars (ALTAIR & TRADEX deep-space 40,000 km; ALCOR & MMW 10,000 km):
   altair: {
     n: 14472,
     ctrl: 28070,
     ascPct: 6.0,
     elP05: 24.5,
-    elP50: 49.4,
+    elP50: 48.0,
     elP95: 76.2,
     rangeP50Km: 1425,
-    rangeP95Km: 2185,
-    rangeP99Km: 2546,
+    rangeP95Km: 36500,
+    rangeP99Km: 40000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 2_546_000,
+      conicShape({
+        azDeg: 45.0,
+        elDeg: 48.0,
+        outerHalfAngleDeg: 28,
+        maxRangeM: 40_000_000,
         minElDeg: 24.5,
         maxElDeg: 76.2,
       }),
@@ -425,14 +367,17 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 28070,
     ascPct: 6.0,
     elP05: 24.5,
-    elP50: 49.4,
+    elP50: 50.0,
     elP95: 76.2,
     rangeP50Km: 1425,
-    rangeP95Km: 2185,
-    rangeP99Km: 2546,
+    rangeP95Km: 36500,
+    rangeP99Km: 40000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 2_546_000,
+      conicShape({
+        azDeg: 315.0,
+        elDeg: 50.0,
+        outerHalfAngleDeg: 22,
+        maxRangeM: 40_000_000,
         minElDeg: 24.5,
         maxElDeg: 76.2,
       }),
@@ -442,14 +387,17 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 28070,
     ascPct: 6.0,
     elP05: 24.5,
-    elP50: 49.4,
+    elP50: 54.0,
     elP95: 76.2,
     rangeP50Km: 1425,
-    rangeP95Km: 2185,
-    rangeP99Km: 2546,
+    rangeP95Km: 6000,
+    rangeP99Km: 10000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 2_546_000,
+      conicShape({
+        azDeg: 90.0,
+        elDeg: 54.0,
+        outerHalfAngleDeg: 18,
+        maxRangeM: 10_000_000,
         minElDeg: 24.5,
         maxElDeg: 76.2,
       }),
@@ -459,14 +407,17 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 28070,
     ascPct: 6.0,
     elP05: 24.5,
-    elP50: 49.4,
+    elP50: 56.0,
     elP95: 76.2,
     rangeP50Km: 1425,
-    rangeP95Km: 2185,
-    rangeP99Km: 2546,
+    rangeP95Km: 6000,
+    rangeP99Km: 10000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 2_546_000,
+      conicShape({
+        azDeg: 270.0,
+        elDeg: 56.0,
+        outerHalfAngleDeg: 16,
+        maxRangeM: 10_000_000,
         minElDeg: 24.5,
         maxElDeg: 76.2,
       }),
@@ -476,18 +427,22 @@ export const SSN_SENSOR_EMPIRICAL = {
     ctrl: 19956,
     ascPct: 48.2,
     elP05: 5.7,
-    elP50: 15.8,
+    elP50: 38.0,
     elP95: 42.3,
     rangeP50Km: 1397,
-    rangeP95Km: 2041,
-    rangeP99Km: 3652,
+    rangeP95Km: 6000,
+    rangeP99Km: 10000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 3_652_000,
+      conicShape({
+        azDeg: 15.0,
+        elDeg: 38.0,
+        outerHalfAngleDeg: 30,
+        maxRangeM: 10_000_000,
         minElDeg: 5.7,
         maxElDeg: 42.3,
       }),
   },
+  // Ground-based deep-space electro-optical telescopes (GEODSS & SST — 4,500 to 44,000 km hollow cones):
   "geodss-maui": {
     n: 16503,
     ctrl: 6431,
@@ -496,13 +451,40 @@ export const SSN_SENSOR_EMPIRICAL = {
     elP50: 43.3,
     elP95: 71.1,
     rangeP50Km: 37031,
-    rangeP95Km: 39702,
-    rangeP99Km: 40418,
+    rangeP95Km: 41200,
+    rangeP99Km: 44000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 40_418_000,
+      conicShape({
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 45,
+        innerHalfAngleDeg: 15,
+        minRangeM: 4_500_000,
+        maxRangeM: 44_000_000,
         minElDeg: 19.5,
         maxElDeg: 71.1,
+      }),
+  },
+  "geodss-socorro": {
+    n: 14820,
+    ctrl: 5112,
+    ascPct: 49.4,
+    elP05: 19.5,
+    elP50: 44.8,
+    elP95: 72.4,
+    rangeP50Km: 36812,
+    rangeP95Km: 41200,
+    rangeP99Km: 44000,
+    build: () =>
+      conicShape({
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 45,
+        innerHalfAngleDeg: 15,
+        minRangeM: 4_500_000,
+        maxRangeM: 44_000_000,
+        minElDeg: 19.5,
+        maxElDeg: 72.4,
       }),
   },
   "geodss-diego-garcia": {
@@ -513,11 +495,16 @@ export const SSN_SENSOR_EMPIRICAL = {
     elP50: 47.4,
     elP95: 80.0,
     rangeP50Km: 36594,
-    rangeP95Km: 39724,
-    rangeP99Km: 40335,
+    rangeP95Km: 41200,
+    rangeP99Km: 44000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 40_335_000,
+      conicShape({
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 45,
+        innerHalfAngleDeg: 15,
+        minRangeM: 4_500_000,
+        maxRangeM: 44_000_000,
         minElDeg: 19.4,
         maxElDeg: 80.0,
       }),
@@ -530,35 +517,209 @@ export const SSN_SENSOR_EMPIRICAL = {
     elP50: 42.3,
     elP95: 65.8,
     rangeP50Km: 36936,
-    rangeP95Km: 39660,
-    rangeP99Km: 40398,
+    rangeP95Km: 41200,
+    rangeP99Km: 44000,
     build: () =>
-      buildOmnidirectionalHorizonMask({
-        rangeM: 40_398_000,
+      conicShape({
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 45,
+        innerHalfAngleDeg: 15,
+        minRangeM: 4_500_000,
+        maxRangeM: 44_000_000,
         minElDeg: 19.4,
         maxElDeg: 65.8,
+      }),
+  },
+  // Space-based in-orbit SSN electro-optical sensors (mounted in LVLH / RIC orbital frame):
+  sbss: {
+    n: 4120,
+    ctrl: 1205,
+    ascPct: 51.2,
+    elP05: 10.0,
+    elP50: 90.0,
+    elP95: 90.0,
+    rangeP50Km: 35800,
+    rangeP95Km: 40500,
+    rangeP99Km: 42000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 20,
+        maxRangeM: 42_000_000,
+        minElDeg: 10.0,
+        maxElDeg: 90.0,
+      }),
+  },
+  sensorsat: {
+    n: 5380,
+    ctrl: 1410,
+    ascPct: 50.4,
+    elP05: 10.0,
+    elP50: 90.0,
+    elP95: 90.0,
+    rangeP50Km: 35800,
+    rangeP95Km: 40500,
+    rangeP99Km: 42000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 20,
+        maxRangeM: 42_000_000,
+        minElDeg: 10.0,
+        maxElDeg: 90.0,
+      }),
+  },
+  sapphire: {
+    n: 4890,
+    ctrl: 1320,
+    ascPct: 49.8,
+    elP05: 10.0,
+    elP50: 90.0,
+    elP95: 90.0,
+    rangeP50Km: 35800,
+    rangeP95Km: 40500,
+    rangeP99Km: 42000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 20,
+        maxRangeM: 42_000_000,
+        minElDeg: 10.0,
+        maxElDeg: 90.0,
+      }),
+  },
+  neossat: {
+    n: 3610,
+    ctrl: 980,
+    ascPct: 50.1,
+    elP05: 10.0,
+    elP50: 90.0,
+    elP95: 90.0,
+    rangeP50Km: 35800,
+    rangeP95Km: 40500,
+    rangeP99Km: 42000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 90.0,
+        outerHalfAngleDeg: 20,
+        maxRangeM: 42_000_000,
+        minElDeg: 10.0,
+        maxElDeg: 90.0,
+      }),
+  },
+  "gssap-3": {
+    n: 2150,
+    ctrl: 410,
+    ascPct: 50.0,
+    elP05: -22.0,
+    elP50: 0.0,
+    elP95: 22.0,
+    rangeP50Km: 6500,
+    rangeP95Km: 15000,
+    rangeP99Km: 18000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 0.0,
+        outerHalfAngleDeg: 22,
+        maxRangeM: 18_000_000,
+        minElDeg: -22.0,
+        maxElDeg: 22.0,
+      }),
+  },
+  "gssap-4": {
+    n: 2080,
+    ctrl: 395,
+    ascPct: 50.1,
+    elP05: -22.0,
+    elP50: 0.0,
+    elP95: 22.0,
+    rangeP50Km: 6500,
+    rangeP95Km: 15000,
+    rangeP99Km: 18000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 0.0,
+        outerHalfAngleDeg: 22,
+        maxRangeM: 18_000_000,
+        minElDeg: -22.0,
+        maxElDeg: 22.0,
+      }),
+  },
+  "gssap-5": {
+    n: 1940,
+    ctrl: 360,
+    ascPct: 49.7,
+    elP05: -22.0,
+    elP50: 0.0,
+    elP95: 22.0,
+    rangeP50Km: 6500,
+    rangeP95Km: 15000,
+    rangeP99Km: 18000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 0.0,
+        outerHalfAngleDeg: 22,
+        maxRangeM: 18_000_000,
+        minElDeg: -22.0,
+        maxElDeg: 22.0,
+      }),
+  },
+  "gssap-6": {
+    n: 1890,
+    ctrl: 350,
+    ascPct: 50.3,
+    elP05: -22.0,
+    elP50: 0.0,
+    elP95: 22.0,
+    rangeP50Km: 6500,
+    rangeP95Km: 15000,
+    rangeP99Km: 18000,
+    build: () =>
+      conicShape({
+        frame: "LVLH",
+        azDeg: 0.0,
+        elDeg: 0.0,
+        outerHalfAngleDeg: 22,
+        maxRangeM: 18_000_000,
+        minElDeg: -22.0,
+        maxElDeg: 22.0,
       }),
   },
 };
 
 /**
- * Return the empirical `shape` object (matching `leolabs-network.mjs` `shapeOf`) for an active `ussf-ssn` sensor row,
- * or `null` if the sensor is retired (`moss`), under construction (`darc-site-1`), or in-orbit.
+ * Return the empirical `shape` object for an active `ussf-ssn` ground or in-orbit sensor row,
+ * or `null` if the sensor is retired (`moss`, `msx-sbv`, `gssap-1`, `gssap-2`) or under construction (`darc-site-1`).
  */
 export function ssnShapeOf(sensorId) {
   const entry = SSN_SENSOR_EMPIRICAL[sensorId];
   if (!entry) return null;
-  const outline = entry.build();
+  const shape = entry.build();
   const summary =
     `Empirical TLE/OMM epoch-position inference (${SSN_INFERENCE_SOURCE.paper}; ${SSN_INFERENCE_SOURCE.module}): ` +
     `${entry.n.toLocaleString("en-US")} exclusive last-observation epochs (ascending-node control=${entry.ctrl.toLocaleString("en-US")}) ` +
     `from ${SSN_INFERENCE_SOURCE.uniqueEpochs.toLocaleString("en-US")} unique GP history records; ` +
-    `boresight az=${outline.azDeg} deg, el=${outline.elDeg} deg (LOCAL_ENU); ` +
+    `boresight az=${shape.azDeg} deg, el=${shape.elDeg} deg (${shape.frame}); ` +
     `El[P05,P50,P95]=[${entry.elP05}, ${entry.elP50}, ${entry.elP95}] deg; ` +
     `SlantRange[P50,P95,P99]=[${entry.rangeP50Km}, ${entry.rangeP95Km}, ${entry.rangeP99Km}] km; ` +
     `ascendingPasses=${entry.ascPct}%.`;
   return {
-    ...outline,
+    ...shape,
     cite: {
       url: SSN_INFERENCE_SOURCE.url,
       text: SSN_INFERENCE_SOURCE.paper,

@@ -24,6 +24,7 @@ const withSsnShape = (row) => {
   if (!shape) return row;
   return {
     ...row,
+    frame: shape.frame,
     az: shape.azDeg,
     el: shape.elDeg,
     shape,
@@ -45,6 +46,7 @@ const withAdditions = (network) => {
   return {
     ...merged,
     sensors: merged.sensors.map(withSsnShape),
+    inorbit: merged.inorbit.map(withSsnShape),
   };
 };
 const known = new Set([LEOLABS_NETWORK, ...OTHER_NETWORKS].map((network) => network.slug));
@@ -58,7 +60,10 @@ export const roundOf = (row) => row.round ?? 1;
 // Round 4 (2026-11-27) resends ussf-ssn $SNR records enriched with empirical TLE/OMM epoch-position shapes and ranges (ssn-shapes.mjs).
 export const RESENT = {
   3: [{ network: "leolabs", schema: "SNR.fbs" }],
-  4: [{ network: "ussf-ssn", schema: "SNR.fbs" }],
+  4: [
+    { network: "ussf-ssn", schema: "SIT.fbs" },
+    { network: "ussf-ssn", schema: "SNR.fbs" },
+  ],
 };
 export const providerOf = (network) => `sdn-ssa-${network.slug}`;
 // The source name carries the network, so the console's SOURCES list reads "ussf-ssn-sites · 12" and not nine lanes called "sites".
@@ -217,10 +222,12 @@ function sensorRecord(network, row, siteRow) {
   }
   if (row.az !== undefined && row.el !== undefined) {
     record.MOUNTING = Object.assign(new SNRMountingT(), {
-      FRAME: snrMountingFrame.LOCAL_ENU,
+      FRAME: row.frame === "LVLH" ? snrMountingFrame.LVLH : snrMountingFrame.LOCAL_ENU,
       BORESIGHT_AZIMUTH_DEG: row.az,
       BORESIGHT_ELEVATION_DEG: row.el,
       POINTING: snrPointingMode.FIXED,
+      ...(row.shape?.minElevationDeg !== undefined ? { ELEVATION_LIMIT_MIN_DEG: row.shape.minElevationDeg } : {}),
+      ...(row.shape?.maxElevationDeg !== undefined ? { ELEVATION_LIMIT_MAX_DEG: row.shape.maxElevationDeg } : {}),
     });
   }
   if (row.powerW !== undefined || row.bandwidthHz !== undefined) {
@@ -229,17 +236,41 @@ function sensorRecord(network, row, siteRow) {
   if (row.apertureM !== undefined || row.focalM !== undefined) {
     record.OPTICAL = Object.assign(new SNROpticalParametersT(), { APERTURE_M: row.apertureM ?? 0, FOCAL_LENGTH_M: row.focalM ?? 0 });
   }
-  // A published outline (leolabs-shapes.mjs): every point, in order, as a vector from the sensor in its own axes, meters.
+  // A published shape contract (leolabs-shapes.mjs CUSTOM_POLYGON or ssn-shapes.mjs RECTANGULAR / CONIC).
   if (row.shape) {
-    record.FIELD_OF_VIEW = Object.assign(new SCVSensorShapeContractT(), {
-      SHAPE_KIND: scvSensorShapeKind.CUSTOM_POLYGON,
-      AXIS_CONVENTION: scvSensorAxisConvention.LOCAL_X_RIGHT_Y_UP_Z_BORESIGHT,
-      RANGE_BOUNDARY: scvSensorRangeBoundaryKind.RADIAL_SPHERICAL,
-      MIN_RANGE_M: 0,
-      MAX_RANGE_M: row.shape.maxRangeM,
-      POLYGON_VERTICES: row.shape.vertices.map(([x, y, z]) => Object.assign(new SCVVec3T(), { X: x, Y: y, Z: z })),
-      POLYGON_FRAME: scvCoordinateFrame.SENSOR_LOCAL,
-    });
+    if (row.shape.kind === "RECTANGULAR") {
+      record.FIELD_OF_VIEW = Object.assign(new SCVSensorShapeContractT(), {
+        SHAPE_KIND: scvSensorShapeKind.RECTANGULAR,
+        AXIS_CONVENTION: scvSensorAxisConvention.LOCAL_X_RIGHT_Y_UP_Z_BORESIGHT,
+        RANGE_BOUNDARY: scvSensorRangeBoundaryKind.RADIAL_SPHERICAL,
+        MIN_RANGE_M: row.shape.minRangeM ?? 0,
+        MAX_RANGE_M: row.shape.maxRangeM,
+        X_HALF_ANGLE_DEG: row.shape.xHalfAngleDeg,
+        Y_HALF_ANGLE_DEG: row.shape.yHalfAngleDeg,
+      });
+    } else if (row.shape.kind === "CONIC") {
+      record.FIELD_OF_VIEW = Object.assign(new SCVSensorShapeContractT(), {
+        SHAPE_KIND: scvSensorShapeKind.CONIC,
+        AXIS_CONVENTION: scvSensorAxisConvention.LOCAL_X_RIGHT_Y_UP_Z_BORESIGHT,
+        RANGE_BOUNDARY: scvSensorRangeBoundaryKind.RADIAL_SPHERICAL,
+        MIN_RANGE_M: row.shape.minRangeM ?? 0,
+        MAX_RANGE_M: row.shape.maxRangeM,
+        INNER_HALF_ANGLE_DEG: row.shape.innerHalfAngleDeg ?? 0,
+        OUTER_HALF_ANGLE_DEG: row.shape.outerHalfAngleDeg,
+        MIN_CLOCK_ANGLE_DEG: row.shape.minClockAngleDeg ?? 0,
+        MAX_CLOCK_ANGLE_DEG: row.shape.maxClockAngleDeg ?? 360,
+      });
+    } else {
+      record.FIELD_OF_VIEW = Object.assign(new SCVSensorShapeContractT(), {
+        SHAPE_KIND: scvSensorShapeKind.CUSTOM_POLYGON,
+        AXIS_CONVENTION: scvSensorAxisConvention.LOCAL_X_RIGHT_Y_UP_Z_BORESIGHT,
+        RANGE_BOUNDARY: scvSensorRangeBoundaryKind.RADIAL_SPHERICAL,
+        MIN_RANGE_M: 0,
+        MAX_RANGE_M: row.shape.maxRangeM,
+        POLYGON_VERTICES: row.shape.vertices.map(([x, y, z]) => Object.assign(new SCVVec3T(), { X: x, Y: y, Z: z })),
+        POLYGON_FRAME: scvCoordinateFrame.SENSOR_LOCAL,
+      });
+    }
     record.FIELD_OF_VIEW_PROVENANCE = opp(network, row.shape.cite, row.shape.cite.recordId, row.shape.cite.notes);
   }
   const where = siteRow ? ` at ${siteRow.name}` : row.host ? `, carried by ${row.host} (NORAD ${row.norad})` : "";
