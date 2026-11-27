@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"gopkg.in/yaml.v3"
 )
 
@@ -824,6 +825,11 @@ type FlowService struct {
 	// retrieval that once held a large download keeps that high-water mark
 	// for the life of the node unless its instance goes. Default false.
 	ReleaseAfterRun bool `yaml:"release_after_run,omitempty"`
+
+	// Private marks this timer-served flow as internal/unadvertised: it is
+	// omitted from public /api/apps and /api/v1/modules inventories while
+	// remaining visible to authenticated admins on /api/v1/modules/runtime.
+	Private bool `yaml:"private,omitempty"`
 }
 
 // EffectiveRetrievalInterval parses RetrievalInterval. It returns ok=false
@@ -880,6 +886,12 @@ type FlowMount struct {
 	// full — the exact instant-but-permanently-empty failure the cache hold
 	// existed to prevent.
 	Config map[string]interface{} `yaml:"config,omitempty"`
+
+	// Private marks this HTTP-mounted flow as internal/unadvertised: it is
+	// omitted from /api/v1/openapi.json and /api/v1/docs, and its bundle
+	// api.routes[].anonymous flags are ignored (only explicit operator
+	// admin.public_paths rules can open a route without admin auth).
+	Private bool `yaml:"private,omitempty"`
 }
 
 // PublishingConfig controls remote data publishing via the API.
@@ -1702,6 +1714,28 @@ type StorageConfig struct {
 	// A single frame larger than the budget is still applied whole: frames
 	// are never split, so no value of this knob can wedge a replay.
 	AuxiliaryReplayChunkBytes int64 `yaml:"auxiliary_replay_chunk_bytes,omitempty"`
+
+	// PrivateSchemas names SDS schemas (e.g. "AIS.fbs") stored locally on this
+	// node that must never appear on public discovery, catalog, source, index,
+	// sandboxed public-query, or libp2p pubsub surfaces. Trusted node flows with
+	// explicit storage_query/storage_write grants and authenticated admins can
+	// still read and write them.
+	PrivateSchemas []string `yaml:"private_schemas,omitempty"`
+}
+
+// IsPrivateSchema reports whether schema (e.g. "AIS" or "AIS.fbs") is marked
+// private in storage.private_schemas.
+func (c StorageConfig) IsPrivateSchema(schema string) bool {
+	target := sds.NormalizeSchemaFileName(schema)
+	if target == "" || len(c.PrivateSchemas) == 0 {
+		return false
+	}
+	for _, entry := range c.PrivateSchemas {
+		if sds.NormalizeSchemaFileName(entry) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultStorageMaxSizePercent is the disk-quota percentage StorageConfig

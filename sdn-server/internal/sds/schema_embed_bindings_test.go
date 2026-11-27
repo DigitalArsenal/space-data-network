@@ -13,6 +13,7 @@ import (
 	bACW "github.com/DigitalArsenal/spacedatastandards.org/lib/go/ACW"
 	bAEM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/AEM"
 	bAGR "github.com/DigitalArsenal/spacedatastandards.org/lib/go/AGR"
+	bAIS "github.com/DigitalArsenal/spacedatastandards.org/lib/go/AIS"
 	bANI "github.com/DigitalArsenal/spacedatastandards.org/lib/go/ANI"
 	bAOF "github.com/DigitalArsenal/spacedatastandards.org/lib/go/AOF"
 	bAPL "github.com/DigitalArsenal/spacedatastandards.org/lib/go/APL"
@@ -326,6 +327,7 @@ var driftGuardedSchemas = []struct {
 	{"ACW.fbs", &bACW.ACW{}},
 	{"AEM.fbs", &bAEM.AEM{}},
 	{"AGR.fbs", &bAGR.AGR{}},
+	{"AIS.fbs", &bAIS.AIS{}},
 	{"ANI.fbs", &bANI.ANI{}},
 	{"AOF.fbs", &bAOF.AOF{}},
 	{"APL.fbs", &bAPL.APL{}},

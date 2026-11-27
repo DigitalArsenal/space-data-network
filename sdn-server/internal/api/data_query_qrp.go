@@ -106,6 +106,10 @@ func (h *DataQueryHandler) handleDataQuery(w http.ResponseWriter, r *http.Reques
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
 		return
 	}
+	if h.store.IsPrivateSchema(q.raw.SchemaName) {
+		WriteErrorFrame(w, http.StatusNotFound, "not_found", "schema not found", 0)
+		return
+	}
 	store, closeStore, err := h.storeForDatastoreKey(q.archiveID)
 	if err != nil {
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)

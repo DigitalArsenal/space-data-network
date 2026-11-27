@@ -152,6 +152,10 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "schema is required", 0)
 		return
 	}
+	if h.store.IsPrivateSchema(schema) {
+		WriteErrorFrame(w, http.StatusNotFound, "not_found", "schema not found", 0)
+		return
+	}
 
 	page := parsePositiveIntParam(values.Get("page"), 1)
 	limit := parsePositiveIntParam(values.Get("limit"), 50)
@@ -336,17 +340,26 @@ func (h *DataQueryHandler) handleSummary(w http.ResponseWriter, r *http.Request)
 		{Name: "count", Type: colInt64}, {Name: "total_bytes", Type: colInt64, Unit: "B"},
 	}
 	rows := make([][]qrpVal, 0, len(summary.Sources)+len(summary.Schemas)+1)
+	var publicRecords, publicBytes int64
 	for _, src := range summary.Sources {
+		if h.store.IsPrivateSchema(src.SchemaName) {
+			continue
+		}
 		rows = append(rows, []qrpVal{textVal(src.SchemaName), textVal(src.ProviderID), textVal(src.SourceName),
 			textVal(src.BatchID), textVal(src.ProducerPeerID), textVal(src.ProducerPublicKey), intVal(src.Count), intVal(src.TotalBytes)})
 	}
 	for _, sch := range summary.Schemas {
+		if h.store.IsPrivateSchema(sch.SchemaName) {
+			continue
+		}
+		publicRecords += sch.Count
+		publicBytes += sch.TotalBytes
 		rows = append(rows, []qrpVal{textVal(sch.SchemaName), textVal(""), textVal(""), textVal(""), textVal(""), textVal(""),
 			intVal(sch.Count), intVal(sch.TotalBytes)})
 	}
 	rows = append(rows, []qrpVal{textVal(""), textVal(""), textVal(""), textVal(""), textVal(""), textVal(""),
-		intVal(summary.TotalRecords), intVal(summary.TotalBytes)})
-	writeTablePage(w, qrpTable{Status: QRPStatusOk, Columns: cols, Rows: rows, TotalCount: uint64(summary.TotalRecords), AsOfMs: time.Now().UnixMilli()})
+		intVal(publicRecords), intVal(publicBytes)})
+	writeTablePage(w, qrpTable{Status: QRPStatusOk, Columns: cols, Rows: rows, TotalCount: uint64(publicRecords), AsOfMs: time.Now().UnixMilli()})
 }
 
 func (h *DataQueryHandler) handleDatastores(w http.ResponseWriter, r *http.Request) {
@@ -373,6 +386,9 @@ func (h *DataQueryHandler) handleDatastores(w http.ResponseWriter, r *http.Reque
 	rows := make([][]qrpVal, 0, len(entries))
 	for _, e := range entries {
 		id := e.Identity
+		if h.store.IsPrivateSchema(id.SchemaName) {
+			continue
+		}
 		params := make([]string, 0, len(id.CanonicalParams))
 		for k, v := range id.CanonicalParams {
 			params = append(params, k+"="+v)
@@ -396,18 +412,23 @@ func (h *DataQueryHandler) handleLocalReplicaStats(w http.ResponseWriter, r *htt
 	}
 
 	values := r.URL.Query()
-	stats, err := h.store.LocalReplicaStats(storage.LocalReplicaStatsQuery{
-		SchemaName:        firstNonEmptyDataString(values.Get("schema"), values.Get("schema_name"), values.Get("schemaName")),
-		ProviderPeerID:    firstNonEmptyDataString(values.Get("provider_peer_id"), values.Get("providerPeerId"), values.Get("producer_peer_id"), values.Get("producerPeerId")),
-		ProviderPublicKey: firstNonEmptyDataString(values.Get("provider_public_key"), values.Get("providerPublicKey"), values.Get("producer_public_key"), values.Get("producerPublicKey")),
-		ProviderID:        firstNonEmptyDataString(values.Get("provider_id"), values.Get("providerId")),
-		SourceName:        firstNonEmptyDataString(values.Get("source_name"), values.Get("sourceName")),
-		BatchID:           firstNonEmptyDataString(values.Get("batch_id"), values.Get("batchId")),
-		QueryProfile:      firstNonEmptyDataString(values.Get("query_profile"), values.Get("queryProfile")),
-	})
-	if err != nil {
-		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
-		return
+	askedSchema := firstNonEmptyDataString(values.Get("schema"), values.Get("schema_name"), values.Get("schemaName"))
+	var stats []storage.LocalReplicaStats
+	if askedSchema == "" || !h.store.IsPrivateSchema(askedSchema) {
+		var err error
+		stats, err = h.store.LocalReplicaStats(storage.LocalReplicaStatsQuery{
+			SchemaName:        askedSchema,
+			ProviderPeerID:    firstNonEmptyDataString(values.Get("provider_peer_id"), values.Get("providerPeerId"), values.Get("producer_peer_id"), values.Get("producerPeerId")),
+			ProviderPublicKey: firstNonEmptyDataString(values.Get("provider_public_key"), values.Get("providerPublicKey"), values.Get("producer_public_key"), values.Get("producerPublicKey")),
+			ProviderID:        firstNonEmptyDataString(values.Get("provider_id"), values.Get("providerId")),
+			SourceName:        firstNonEmptyDataString(values.Get("source_name"), values.Get("sourceName")),
+			BatchID:           firstNonEmptyDataString(values.Get("batch_id"), values.Get("batchId")),
+			QueryProfile:      firstNonEmptyDataString(values.Get("query_profile"), values.Get("queryProfile")),
+		})
+		if err != nil {
+			WriteErrorFrame(w, http.StatusBadRequest, "bad_request", err.Error(), 0)
+			return
+		}
 	}
 	cols := []qrpCol{
 		{Name: "schema_name", Type: colString}, {Name: "provider_peer_id", Type: colString}, {Name: "provider_public_key", Type: colString},
@@ -419,6 +440,9 @@ func (h *DataQueryHandler) handleLocalReplicaStats(w http.ResponseWriter, r *htt
 	}
 	rows := make([][]qrpVal, 0, len(stats))
 	for _, st := range stats {
+		if h.store.IsPrivateSchema(st.SchemaName) {
+			continue
+		}
 		rows = append(rows, []qrpVal{textVal(st.SchemaName), textVal(st.ProviderPeerID), textVal(st.ProviderPublicKey),
 			textVal(st.ProviderID), textVal(st.SourceName), textVal(st.BatchID), textVal(st.QueryProfile),
 			intVal(st.LocalRows), intVal(st.PinnedRows), intVal(st.CachedBytes), intVal(st.PinnedBytes),
@@ -450,6 +474,10 @@ func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Reques
 	recordID, err := url.PathUnescape(parts[1])
 	if err != nil {
 		WriteErrorFrame(w, http.StatusBadRequest, "bad_request", "invalid record id", 0)
+		return
+	}
+	if h.store.IsPrivateSchema(schemaName) {
+		WriteErrorFrame(w, http.StatusNotFound, "not_found", "record not found", 0)
 		return
 	}
 

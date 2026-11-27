@@ -152,3 +152,23 @@ func (mf *MountedFlow) MountPath() string {
 	defer mf.lazyMu.RUnlock()
 	return mf.mountPath
 }
+
+// IsPrivate reports whether this mounted flow is configured private/unadvertised.
+func (mf *MountedFlow) IsPrivate() bool {
+	if mf == nil {
+		return false
+	}
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
+	return mf.private
+}
+
+// SetPrivate marks this mounted flow private/unadvertised.
+func (mf *MountedFlow) SetPrivate(private bool) {
+	if mf == nil {
+		return
+	}
+	mf.lazyMu.Lock()
+	defer mf.lazyMu.Unlock()
+	mf.private = private
+}

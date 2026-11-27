@@ -573,8 +573,63 @@ func (rcv *SCNReference) ObservationRadar(obj *RDO) *RDO {
 }
 
 /// Radar observation record associated with this reference.
+/// Optional display color token (for example "#ff9f0a") for this reference.
+func (rcv *SCNReference) COLOR() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *SCNReference) Color() []byte {
+	return rcv.COLOR()
+}
+
+/// Optional display color token (for example "#ff9f0a") for this reference.
+/// True when the 1-sigma covariance ellipsoid is shown on this reference.
+func (rcv *SCNReference) SHOW_COVARIANCE() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *SCNReference) ShowCovariance() bool {
+	return rcv.SHOW_COVARIANCE()
+}
+
+/// True when the 1-sigma covariance ellipsoid is shown on this reference.
+func (rcv *SCNReference) MutateSHOW_COVARIANCE(n bool) bool {
+	return rcv._tab.MutateBoolSlot(58, n)
+}
+
+func (rcv *SCNReference) MutateShowCovariance(n bool) bool {
+	return rcv.MutateSHOW_COVARIANCE(n)
+}
+
+/// Typed display-style overrides for this reference (object, group, or folder).
+func (rcv *SCNReference) DISPLAY_STYLE(obj *SCNDisplayStyle) *SCNDisplayStyle {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(SCNDisplayStyle)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *SCNReference) DisplayStyle(obj *SCNDisplayStyle) *SCNDisplayStyle {
+	return rcv.DISPLAY_STYLE(obj)
+}
+
+/// Typed display-style overrides for this reference (object, group, or folder).
 func SCNReferenceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(26)
+	builder.StartObject(29)
 }
 func SCNReferenceAddREFERENCE_ID(builder *flatbuffers.Builder, REFERENCE_ID flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(REFERENCE_ID), 0)
@@ -767,6 +822,24 @@ func SCNReferenceAddOBSERVATION_RADAR(builder *flatbuffers.Builder, OBSERVATION_
 }
 func SCNReferenceAddObservationRadar(builder *flatbuffers.Builder, OBSERVATION_RADAR flatbuffers.UOffsetT) {
 	SCNReferenceAddOBSERVATION_RADAR(builder, OBSERVATION_RADAR)
+}
+func SCNReferenceAddCOLOR(builder *flatbuffers.Builder, COLOR flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(COLOR), 0)
+}
+func SCNReferenceAddColor(builder *flatbuffers.Builder, COLOR flatbuffers.UOffsetT) {
+	SCNReferenceAddCOLOR(builder, COLOR)
+}
+func SCNReferenceAddSHOW_COVARIANCE(builder *flatbuffers.Builder, SHOW_COVARIANCE bool) {
+	builder.PrependBoolSlot(27, SHOW_COVARIANCE, false)
+}
+func SCNReferenceAddShowCovariance(builder *flatbuffers.Builder, SHOW_COVARIANCE bool) {
+	SCNReferenceAddSHOW_COVARIANCE(builder, SHOW_COVARIANCE)
+}
+func SCNReferenceAddDISPLAY_STYLE(builder *flatbuffers.Builder, DISPLAY_STYLE flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(28, flatbuffers.UOffsetT(DISPLAY_STYLE), 0)
+}
+func SCNReferenceAddDisplayStyle(builder *flatbuffers.Builder, DISPLAY_STYLE flatbuffers.UOffsetT) {
+	SCNReferenceAddDISPLAY_STYLE(builder, DISPLAY_STYLE)
 }
 func SCNReferenceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

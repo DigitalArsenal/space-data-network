@@ -56,7 +56,10 @@ type AppsHandler struct {
 	// pnmSink write-through-persists a refreshed PNM so the value survives a
 	// restart and stays available when the store is busy. May be nil.
 	pnmSink func(providerID, sourceName string, pnm sourcemetrics.PNM)
-	rl      *rateLimiter
+	// privateSchema reports whether a schema must be omitted from the public
+	// $APPS feed (storage.private_schemas). May be nil.
+	privateSchema func(schema string) bool
+	rl            *rateLimiter
 }
 
 // NewAppsHandler constructs the $APPS handler. Any dependency may be nil; the
@@ -69,7 +72,15 @@ func NewAppsHandler(runtime AppsRuntimeSource, metrics AppsMetricsSource, store 
 	if store != nil {
 		h.store = store
 		h.producers = store
+		h.privateSchema = store.IsPrivateSchema
 	}
+	return h
+}
+
+// WithPrivateSchemaFilter sets a predicate identifying schemas omitted from
+// the public $APPS feed.
+func (h *AppsHandler) WithPrivateSchemaFilter(fn func(string) bool) *AppsHandler {
+	h.privateSchema = fn
 	return h
 }
 
@@ -220,12 +231,34 @@ func (h *AppsHandler) handleApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sources := h.sourceViews()
+	privateApps := map[string]bool{}
+	var snapshot plugins.RuntimeSnapshot
+	if h.runtime != nil {
+		snapshot = h.runtime()
+		for _, entry := range snapshot.Modules {
+			if entry.Private {
+				privateApps[entry.ID] = true
+			}
+		}
+	}
+
+	rawSources := h.sourceViews()
 	// Data this node RECEIVED from other producers belongs on the same board as
 	// data it pulled: the question "is this node getting the catalog?" has the
 	// same answer either way. Appended after the ledger rows and bounded by the
 	// same rule — the feed always answers, even mid-ingest.
-	sources = append(sources, h.remoteProducerViews()...)
+	rawSources = append(rawSources, h.remoteProducerViews()...)
+
+	sources := make([]appSourceView, 0, len(rawSources))
+	for _, src := range rawSources {
+		if src.AppID != "" && privateApps[src.AppID] {
+			continue
+		}
+		if h.isPrivateSource(src) {
+			continue
+		}
+		sources = append(sources, src)
+	}
 
 	// Group sources under the app that produced them. Attribution comes from
 	// the producing module/flow id the storage connector recorded — the host
@@ -239,8 +272,10 @@ func (h *AppsHandler) handleApps(w http.ResponseWriter, r *http.Request) {
 
 	apps := make([]appView, 0, 4)
 	if h.runtime != nil {
-		snapshot := h.runtime()
 		for _, entry := range snapshot.Modules {
+			if entry.Private {
+				continue
+			}
 			view := appView{
 				ID:            entry.ID,
 				Version:       entry.Version,
@@ -285,6 +320,21 @@ func (h *AppsHandler) handleApps(w http.ResponseWriter, r *http.Request) {
 		Apps:        apps,
 		Sources:     sources,
 	})
+}
+
+func (h *AppsHandler) isPrivateSource(src appSourceView) bool {
+	if h.privateSchema == nil {
+		return false
+	}
+	if src.SchemaName != "" && h.privateSchema(src.SchemaName) {
+		return true
+	}
+	for _, s := range src.LastSchemas {
+		if h.privateSchema(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // pnmRefreshBudget bounds the OPTIONAL authoritative PNM lookup for the WHOLE

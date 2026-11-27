@@ -1,0 +1,45 @@
+{
+  "description": "SpaceAware private AI session collector and off-box S3/R2 backup configuration for sdn.spaceaware.io (space-data-network-01, Issue #1199).",
+  "storage": {
+    "private_schemas": [
+      "AIS.fbs"
+    ]
+  },
+  "admin": {
+    "public_paths": [
+      "POST /api/v1/collect/ai-sessions/ingest"
+    ]
+  },
+  "flows": {
+    "mounts": [
+      {
+        "path": "/api/v1/collect/ai-sessions/",
+        "flow": "/opt/data/flows/ai-session-collector/runtime.wasm",
+        "pool": 1,
+        "private": true,
+        "config": {
+          "max_body_bytes": 524288,
+          "job_id": "ai-session-backup"
+        }
+      }
+    ],
+    "services": [
+      {
+        "flow": "/opt/data/flows/ai-session-backup/runtime.wasm",
+        "private": true,
+        "exclusive_group": "ai-session-collector",
+        "release_after_run": true,
+        "config": {
+          "store": "r2",
+          "endpoint": "https://r2.spaceaware.internal",
+          "bucket": "spaceaware-ai-sessions-backup",
+          "region": "auto",
+          "prefix": "ai-sessions",
+          "job_id": "ai-session-backup",
+          "max_records": 2500,
+          "max_bytes": 4194304
+        }
+      }
+    ]
+  }
+}
