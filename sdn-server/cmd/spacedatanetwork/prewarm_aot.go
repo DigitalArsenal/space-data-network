@@ -11,8 +11,10 @@ package main
 // no-op.
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -230,15 +232,9 @@ func reportPrewarm(out io.Writer, label, path string, alreadyPresent bool) {
 }
 
 // prewarmEngineAOTForDaemon compiles the FlatSQL engine artifacts the store
-// opens into the daemon's cache before it opens, if they are not already
-// there: the format-1 engine (format 1, and format 4's control instance), and
-// the format-4 engine when the store opens as format 4 (storage.StoreFormat):
-// it runs AOT only, and an update brings a new artifact the update lane does
-// not prewarm.
-//
-// Split from prewarmAOTArtifacts so daemon startup does exactly the mandatory
-// part: the engines. Flows and the engine-link shim are prewarmed on demand or
-// by the explicit `prewarm-aot` command.
+// opens into the daemon's cache before it opens, and prewarms any installed
+// config-declared flows.services[] artifacts so daemon startup/upgrades never
+// silently drop timer-served flows into interpreted mode.
 func prewarmEngineAOTForDaemon(out io.Writer, cfg *config.Config) error {
 	cacheDir := storage.EngineAOTCacheDir()
 	path, present, err := flatsqlrt.PrewarmEngineAOT(cacheDir)
@@ -248,19 +244,60 @@ func prewarmEngineAOTForDaemon(out io.Writer, cfg *config.Config) error {
 	if !present {
 		fmt.Fprintf(out, "compiled the FlatSQL engine AOT artifact for this host: %s\n", path)
 	}
-	if cfg.Mode == "edge" || strings.TrimSpace(cfg.Storage.Path) == "" {
+	if cfg != nil && cfg.Mode != "edge" && strings.TrimSpace(cfg.Storage.Path) != "" {
+		if format, err := storage.StoreFormat(cfg.Storage.Path); err == nil && opensWithFormat5Engine(format) {
+			start := time.Now()
+			path, present, err = flatsqlrt.PrewarmP4ThreadsAOT(cacheDir)
+			if err != nil {
+				return fmt.Errorf("the format-4 engine (%s): %w", flatsqlrt.P4ThreadsPackage, err)
+			}
+			if !present {
+				fmt.Fprintf(out, "compiled the format-4 engine AOT artifact for this host in %s: %s\n", time.Since(start).Round(time.Second), path)
+			}
+		}
+	}
+	return prewarmFlowServicesForDaemon(out, cfg, cacheDir)
+}
+
+// prewarmFlowServicesForDaemon compiles installed flows.services[] bundles into
+// cacheDir before startFlowServices mounts them. Uninstalled bundles are skipped
+// cleanly because module delivery may install them later.
+func prewarmFlowServicesForDaemon(out io.Writer, cfg *config.Config, cacheDir string) error {
+	if cfg == nil || !cfg.Flows.Enabled || len(cfg.Flows.Services) == 0 {
 		return nil
 	}
-	if format, err := storage.StoreFormat(cfg.Storage.Path); err != nil || !opensWithFormat5Engine(format) {
-		return nil
+	var store *flowrt.FlowStore
+	if storagePath := strings.TrimSpace(cfg.Flows.StoragePath); storagePath != "" {
+		var err error
+		store, err = flowrt.NewFlowStore(storagePath)
+		if err != nil {
+			return fmt.Errorf("open flow store %s: %w", storagePath, err)
+		}
 	}
-	start := time.Now()
-	path, present, err = flatsqlrt.PrewarmP4ThreadsAOT(cacheDir)
-	if err != nil {
-		return fmt.Errorf("the format-4 engine (%s): %w", flatsqlrt.P4ThreadsPackage, err)
+	var flows []string
+	for _, service := range cfg.Flows.Services {
+		if ref := strings.TrimSpace(service.Flow); ref != "" && !slices.Contains(flows, ref) {
+			flows = append(flows, ref)
+		}
 	}
-	if !present {
-		fmt.Fprintf(out, "compiled the format-4 engine AOT artifact for this host in %s: %s\n", time.Since(start).Round(time.Second), path)
+	var failed []string
+	for _, flowRef := range flows {
+		start := time.Now()
+		path, present, err := flowrt.PrewarmFlowAOT(flowRef, store, cacheDir)
+		if err != nil {
+			if os.IsNotExist(err) || errors.Is(err, flowrt.ErrFlowNotInstalled) {
+				continue
+			}
+			fmt.Fprintf(out, "warning: prewarm flow %s AOT artifact failed: %v\n", flowRef, err)
+			failed = append(failed, flowRef)
+			continue
+		}
+		if !present {
+			fmt.Fprintf(out, "compiled flow %s AOT artifact for this host in %s: %s\n", flowRef, time.Since(start).Round(time.Second), path)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("flow AOT prewarm failed for %d flow(s): %s", len(failed), strings.Join(failed, ", "))
 	}
 	return nil
 }
