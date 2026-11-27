@@ -106,6 +106,7 @@
         "Name, catalog number and international designator search",
         "Operator and constellation search",
         "SQL predicates over the catalog",
+        "Recent-launch SATCAT SQL filtering and breakup debris family resolution from the authoritative COSPAR breakup registry",
         "Place names and typed coordinates with boundary outlines",
         "Moon places: every crewed and robotic landing site, maria, craters, mountains and rilles (IAU/USGS Gazetteer, NASA NSSDCA); picking one centers the Moon and flies there"
       ],
@@ -300,6 +301,7 @@
       "summary": "Screen one satellite against the whole catalog or a chosen object, compute collision probability and plan an avoidance burn. Free on spaceaware.io with no account.",
       "capabilities": [
         "Screen against the full catalog or a single object",
+        "Group-vs-group conjunction screening (CNJ:SCREEN GROUP) across constellations, SQL cohorts or selections",
         "Collision probability where available; unavailable results remain unassessed",
         "Source or empirical covariance provenance retained when probability is unavailable",
         "Conjunction data messages in CCSDS 508.0-B-1 KVN and XML, as FlatBuffer or JSON, with OCM orbits",
@@ -1240,7 +1242,7 @@
       "capabilities": [
         "AE-8/AP-8 belt flux models published as $RBF records",
         "Single-event upset, total ionizing dose and internal charging rates in $RDE",
-        "Live geomagnetic conditions, Kp/Ap/F10.7 history, storm-drag orbit decay and catalog-wide reentry forecasting across the entire catalog in the SOL console mode",
+        "Live geomagnetic conditions, Kp/Ap/F10.7 history, storm-drag orbit decay, catalog-wide reentry forecasting (SOL:REENTRY) and catalog-wide conical Earth shadow & illumination screening (SOL:ECLIPSE) across the entire catalog in the SOL console mode",
         "Feeds directly into multi-phenomenology space-weather threat cells"
       ],
       "standards": [
