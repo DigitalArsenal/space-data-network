@@ -177,15 +177,25 @@ func (t *schemaTemplate) build(b *flatbuffers.Builder, seq uint64) []byte {
 
 	// Strings and vectors are nested objects: FlatBuffers requires every one
 	// of them to be finished BEFORE the table that references them starts.
+	// Share the per-record string and blob offsets across columns of the same
+	// type so wide schemas like AIS (58 string columns) still fit within the
+	// requested -record-bytes target without duplicating identical payloads.
+	var strOff, blobOff flatbuffers.UOffsetT
 	for i, c := range t.cols {
 		switch c.Type {
 		case "string":
-			t.strbuf = append(t.strbuf[:0], t.code...)
-			t.strbuf = append(t.strbuf, '-')
-			t.strbuf = strconv.AppendUint(t.strbuf, seq, 10)
-			t.offsets[i] = b.CreateByteString(t.strbuf)
+			if strOff == 0 {
+				t.strbuf = append(t.strbuf[:0], t.code...)
+				t.strbuf = append(t.strbuf, '-')
+				t.strbuf = strconv.AppendUint(t.strbuf, seq, 10)
+				strOff = b.CreateByteString(t.strbuf)
+			}
+			t.offsets[i] = strOff
 		case "[ubyte]":
-			t.offsets[i] = b.CreateByteVector(t.blob)
+			if blobOff == 0 {
+				blobOff = b.CreateByteVector(t.blob)
+			}
+			t.offsets[i] = blobOff
 		}
 	}
 	for i := range t.filler {

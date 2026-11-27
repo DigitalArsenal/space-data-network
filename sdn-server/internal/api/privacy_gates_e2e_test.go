@@ -32,22 +32,22 @@ type stubFlowDoc struct {
 	private bool
 }
 
-func (f stubFlowDoc) ProgramID() string           { return f.id }
-func (f stubFlowDoc) FlowVersion() string         { return f.version }
-func (f stubFlowDoc) MountPath() string           { return f.path }
-func (f stubFlowDoc) APIDoc() *flowrt.FlowAPIDoc  { return f.doc }
-func (f stubFlowDoc) IsPrivate() bool             { return f.private }
+func (f stubFlowDoc) ProgramID() string          { return f.id }
+func (f stubFlowDoc) FlowVersion() string        { return f.version }
+func (f stubFlowDoc) MountPath() string          { return f.path }
+func (f stubFlowDoc) APIDoc() *flowrt.FlowAPIDoc { return f.doc }
+func (f stubFlowDoc) IsPrivate() bool            { return f.private }
 
 type stubPrivatePlugin struct {
 	id      string
 	private bool
 }
 
-func (p stubPrivatePlugin) ID() string                                              { return p.id }
+func (p stubPrivatePlugin) ID() string                                                 { return p.id }
 func (p stubPrivatePlugin) Start(ctx context.Context, rt plugins.RuntimeContext) error { return nil }
-func (p stubPrivatePlugin) RegisterRoutes(mux *http.ServeMux)                       {}
-func (p stubPrivatePlugin) Close() error                                            { return nil }
-func (p stubPrivatePlugin) IsPrivate() bool                                         { return p.private }
+func (p stubPrivatePlugin) RegisterRoutes(mux *http.ServeMux)                          {}
+func (p stubPrivatePlugin) Close() error                                               { return nil }
+func (p stubPrivatePlugin) IsPrivate() bool                                            { return p.private }
 
 func buildQRPRequestFrame(schema string) []byte {
 	b := flatbuffers.NewBuilder(128)

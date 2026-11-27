@@ -153,9 +153,9 @@ func sqlReferencesPrivateTable(sqlText string, privateTables map[string]bool) bo
 	}
 
 	type parenFrame struct {
-		inFromClause  bool
-		inOnOrUsing   bool
-		atParenStart  bool
+		inFromClause bool
+		inOnOrUsing  bool
+		atParenStart bool
 	}
 	var stack []parenFrame
 	inFromClause := false
