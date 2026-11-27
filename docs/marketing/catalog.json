@@ -1136,6 +1136,7 @@
         "A value with no source is left unknown, never guessed",
         "Satellite sensors joined by NORAD ID through the CelesTrak SATCAT",
         "Ground space-surveillance sensors with the cited page revision",
+        "Empirical SSN sensor 3D field-of-view outlines, boresights, elevation limits and slant-range bounds derived from TLE/OMM epoch positions (Johnson / ExaResearch ICSSA 2022 method via analysis/ssn-sensor-inference), with real-time per-tick catalog detection counts in the console",
         "Refreshed weekly and published over the Space Data Network"
       ],
       "standards": [
@@ -1146,7 +1147,7 @@
       "delivery": "node",
       "covers": [],
       "learnMore": "https://spacedatanetwork.org/onboarding.html",
-      "evidence": "space-data-network-modules data-source/sensor-definitions 0.1.0 (modules 4d830a3660), lanes space and ground over SNR.fbs, one PVN per source system; not yet in the live module catalog",
+      "evidence": "space-data-network-modules data-source/sensor-definitions 0.1.0 (modules 4d830a3660) and analysis/ssn-sensor-inference 0.1.0, deployment/leolabs-sensors/ssn-shapes.mjs, lanes space and ground over SNR.fbs, one PVN per source system; not yet in the live module catalog",
       "plan": "free"
     },
     {
