@@ -3180,7 +3180,13 @@ func (n *Node) catchupCandidateDatasetPublicationPNMs(records []*storage.Record)
 		}
 		candidates = append(candidates, record)
 	}
-	return latestDatasetPublicationPNMBatches(candidates)
+	return latestDatasetPublicationPNMBatchesByLane(candidates, func(record *storage.Record) (string, string) {
+		if n == nil || n.store == nil || record == nil || !PNM.SizePrefixedPNMBufferHasIdentifier(record.Data) {
+			return "", ""
+		}
+		pnm := PNM.GetSizePrefixedRootAsPNM(record.Data, 0)
+		return storage.DatasetManifestLaneFromLocalContent(n.store, strings.TrimSpace(string(pnm.CID())))
+	})
 }
 
 func (n *Node) storedDatasetPublicationPNMIsSelfOwned(record *storage.Record) bool {
@@ -4193,8 +4199,10 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 	}
 	if found {
 		switch replayState.State {
-		case storage.DatasetPublicationReplayStateMaterialized, storage.DatasetPublicationReplayStatePermanentError:
+		case storage.DatasetPublicationReplayStatePermanentError:
 			return false, nil
+		case storage.DatasetPublicationReplayStateMaterialized:
+			return n.backfillMaterializedDatasetPublication(ctx, schema, pnmBytes, pnmCID, pnmKey, from)
 		}
 	}
 	if n.datasetPNMAlreadyMaterialized(pnmKey) {
@@ -4373,6 +4381,59 @@ func (n *Node) materializeDatasetPublicationPNMInner(ctx context.Context, schema
 	return true, nil
 }
 
+// backfillMaterializedDatasetPublication registers the sdn_dataset_shard_publications
+// listing row for a publication whose records were already materialized without
+// recording that listing row (for example across an upgrade from builds prior to
+// follower listing registration). It reads only locally held IPFS content and
+// returns quickly once the manifest is already listed.
+func (n *Node) backfillMaterializedDatasetPublication(ctx context.Context, schema string, pnmBytes []byte, manifestCID, pnmKey string, from peer.ID) (bool, error) {
+	has, err := n.store.HasDatasetShardPublicationByManifestCID(schema, manifestCID)
+	if err != nil {
+		return false, fmt.Errorf("check dataset shard publication for %s: %w", manifestCID, err)
+	}
+	if has {
+		return false, nil
+	}
+	if n.datasetPNMAlreadyMaterialized(pnmKey) {
+		return false, nil
+	}
+	providerPublicKey, _, err := verifyDatasetPublicationPNM(pnmBytes, n.datasetPublicationKeyCandidates(ctx, from, true))
+	if err != nil {
+		n.clearDatasetPNMMaterialized(pnmKey)
+		return false, fmt.Errorf("dataset publication PNM from %s: %w", from.ShortString(), err)
+	}
+	result, err := storage.RegisterMaterializedDatasetPublication(n.ctx, n.store, storage.DatasetPublicationReplayOptions{
+		PNM:               pnmBytes,
+		ProviderPublicKey: providerPublicKey,
+		LaneAllowed: func(laneSchema, providerID, sourceName string) bool {
+			if !n.subscribedFrom(from, laneSchema, providerID, sourceName) {
+				return false
+			}
+			return n.laneRetentionRule(laneSchema, providerID, sourceName) == channels.RetentionArchiveAll ||
+				n.followKeepsPublications(from, laneSchema, providerID, sourceName)
+		},
+	})
+	if errors.Is(err, storage.ErrDatasetPublicationLaneNotImported) {
+		datasetPNMLaneRefused.Store(pnmKey, true)
+		return false, err
+	}
+	if err != nil {
+		n.clearDatasetPNMMaterialized(pnmKey)
+		return false, err
+	}
+	if result == nil {
+		return false, nil
+	}
+	log.Infof("Registered materialized dataset publication from %s on %s: schema=%s records=%d manifest=%s shard=%s",
+		from.ShortString(), schema, result.SchemaName, result.RecordCount, result.ManifestCID, result.ShardCID)
+	if n.host == nil || from != n.host.ID() {
+		n.applyLaneRetention(result.SchemaName, result.ProviderID, result.SourceName,
+			storage.RetainCandidate{BatchID: result.BatchID, PublishedAt: result.PublishedAt},
+			datasetPublicationPins(result.ShardCID, result.IndexCID, result.ManifestCID, manifestCID))
+	}
+	return true, nil
+}
+
 // pruneStaleDatasetPublicationWork removes the entries of the replay and
 // feed-head work roots last modified before cutoff. Both paths remove their
 // work when an attempt returns, so what is older than this process was left
@@ -4412,9 +4473,15 @@ func datasetPublicationFileIDSchema(fileID string) string {
 }
 
 func latestDatasetPublicationPNMBatches(records []*storage.Record) []*storage.Record {
+	return latestDatasetPublicationPNMBatchesByLane(records, nil)
+}
+
+func latestDatasetPublicationPNMBatchesByLane(records []*storage.Record, laneOf func(*storage.Record) (string, string)) []*storage.Record {
 	type batchKey struct {
-		dataset string
-		schema  string
+		dataset    string
+		schema     string
+		providerID string
+		sourceName string
 	}
 	type batchChoice struct {
 		batchID string
@@ -4434,7 +4501,11 @@ func latestDatasetPublicationPNMBatches(records []*storage.Record) []*storage.Re
 		if strings.Contains(dataset, "-full") {
 			hasFullDataset[schema] = true
 		}
-		key := batchKey{dataset: dataset, schema: schema}
+		providerID, sourceName := "", ""
+		if laneOf != nil {
+			providerID, sourceName = laneOf(record)
+		}
+		key := batchKey{dataset: dataset, schema: schema, providerID: providerID, sourceName: sourceName}
 		recordMeta[record] = struct {
 			key     batchKey
 			batchID string

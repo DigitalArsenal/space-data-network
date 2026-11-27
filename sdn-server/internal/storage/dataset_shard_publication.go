@@ -488,6 +488,35 @@ func (s *FlatSQLStore) FindDatasetShardPublicationByCID(query DatasetShardPublic
 	return pub, true, nil
 }
 
+// HasDatasetShardPublicationByManifestCID reports whether sdn_dataset_shard_publications
+// already holds a row for manifestCID under the standard publication query profile.
+func (s *FlatSQLStore) HasDatasetShardPublicationByManifestCID(schemaName, manifestCID string) (bool, error) {
+	schemaName = strings.TrimSpace(schemaName)
+	manifestCID = strings.TrimSpace(manifestCID)
+	if schemaName == "" || manifestCID == "" {
+		return false, nil
+	}
+	if err := s.recoverDatasetShardEngineIfPoisoned(); err != nil {
+		return false, fmt.Errorf("check dataset shard publication by manifest cid: %w", err)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var found int
+	err := s.db.QueryRow(`
+		SELECT 1
+		FROM sdn_dataset_shard_publications
+		WHERE schema_name = ? AND query_profile = ? AND manifest_cid = ?
+		LIMIT 1
+	`, schemaName, DatasetPublicationQueryProfile, manifestCID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check dataset shard publication by manifest cid: %w", err)
+	}
+	return true, nil
+}
+
 func (s *FlatSQLStore) DatasetPublicationShardPath(pub DatasetShardPublication) (string, error) {
 	if s == nil {
 		return "", errors.New("FlatSQL store is unavailable")

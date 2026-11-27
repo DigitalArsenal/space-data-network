@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -650,6 +651,9 @@ func materializeDatasetPublicationFromBytes(ctx, fetchCtx context.Context, store
 	if err := recordManifestSourceBatchLicenses(store, manifest, index.SchemaName); err != nil {
 		return nil, err
 	}
+	if err := upsertMaterializedDatasetShardPublication(store, opts.PNM, manifest, manifestCID, shardAsset, indexAsset, int64(len(shardBytes)), sha256Hex(shardBytes), sha256Hex(indexBytes), index); err != nil {
+		return nil, err
+	}
 	return &DatasetPublicationReplayResult{
 		ManifestCID:  manifestCID,
 		ShardCID:     shardAsset.CID,
@@ -682,13 +686,15 @@ func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store
 	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, shardAsset.CID, shardPath, datasetStatedBytes(shardAsset)); err != nil {
 		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, misstatedFetch("shard", err))
 	}
-	if _, _, err := verifyFileCIDAndHash("shard", shardPath, shardAsset.CID, shardAsset.SHA256); err != nil {
+	shardSHA, shardSize, err := verifyFileCIDAndHash("shard", shardPath, shardAsset.CID, shardAsset.SHA256)
+	if err != nil {
 		return nil, err
 	}
 	if err := fetchDatasetPublicationCIDToFile(fetchCtx, opts.FetchByCIDToFile, opts.FetchRetryDelays, indexAsset.CID, indexPath, datasetStatedBytes(indexAsset)); err != nil {
 		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, misstatedFetch("index", err))
 	}
-	if _, _, err := verifyFileCIDAndHash("index", indexPath, indexAsset.CID, indexAsset.SHA256); err != nil {
+	indexSHA, _, err := verifyFileCIDAndHash("index", indexPath, indexAsset.CID, indexAsset.SHA256)
+	if err != nil {
 		return nil, err
 	}
 	imported, index, err := store.importDatasetShardFiles(ctx, shardPath, indexPath, string(manifest.PROVIDER_PEER_ID()), statedRecords)
@@ -696,6 +702,9 @@ func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store
 		return nil, err
 	}
 	if err := recordManifestSourceBatchLicenses(store, manifest, index.SchemaName); err != nil {
+		return nil, err
+	}
+	if err := upsertMaterializedDatasetShardPublication(store, opts.PNM, manifest, manifestCID, shardAsset, indexAsset, shardSize, shardSHA, indexSHA, index); err != nil {
 		return nil, err
 	}
 	return &DatasetPublicationReplayResult{
@@ -712,6 +721,289 @@ func materializeDatasetPublicationFromFiles(ctx, fetchCtx context.Context, store
 		BatchID:      index.BatchID,
 		PublishedAt:  datasetManifestPublishedAt(manifest),
 	}, nil
+}
+
+// RegisterMaterializedDatasetPublication registers the publication listing row
+// for a signed PNM/DPM that was already materialized into this store without
+// recording its sdn_dataset_shard_publications entry (for example across an
+// upgrade from builds prior to follower listing registration). It reads only
+// content already held in the local IPFS repository and never imports records
+// or hits the network. Returns (nil, nil) when the publication's blocks are
+// not held locally or the publication was already retired.
+func RegisterMaterializedDatasetPublication(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions) (*DatasetPublicationReplayResult, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	manifestCID, fileID, err := verifyDatasetPublicationPNM(opts.PNM, opts.ProviderPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	manifestBytes, ok, err := readLocalPublicationContent(store, manifestCID, -1)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if err := verifyBytesCIDAndHash("manifest", manifestBytes, manifestCID, ""); err != nil {
+		return nil, err
+	}
+	manifest, _, err := parseAndVerifyDatasetManifest(manifestBytes, opts.ProviderPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	if dpmFileID := strings.TrimSpace(string(manifest.FILE_ID())); dpmFileID != fileID {
+		return nil, fmt.Errorf("PNM FILE_ID %q does not match DPM FILE_ID %q", fileID, dpmFileID)
+	}
+	assetMap, err := manifestAssetMap(manifest)
+	if err != nil {
+		return nil, err
+	}
+	shardAsset, ok := assetMap["DATA_SHARD"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing DATA_SHARD asset")
+	}
+	indexAsset, ok := assetMap["QUERY_INDEX"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
+	}
+	if opts.LaneAllowed != nil {
+		schema := strings.TrimSpace(shardAsset.Schema)
+		if schema == "" {
+			schema = datasetFileIDSchema(fileID)
+		}
+		providerID, sourceNames := DatasetManifestLanes(manifest)
+		for _, sourceName := range sourceNames {
+			if !opts.LaneAllowed(schema, providerID, sourceName) {
+				return nil, fmt.Errorf("%w: %s %s/%s", ErrDatasetPublicationLaneNotImported, schema, providerID, sourceName)
+			}
+		}
+	}
+	shardSize, shardHeld := store.PublicationContentHeld(shardAsset.CID)
+	if !shardHeld || (shardAsset.Bytes > 0 && shardSize != int64(shardAsset.Bytes)) {
+		return nil, nil
+	}
+	indexSize, indexHeld := store.PublicationContentHeld(indexAsset.CID)
+	if !indexHeld || (indexAsset.Bytes > 0 && indexSize != int64(indexAsset.Bytes)) {
+		return nil, nil
+	}
+	var filter IndexedRecordQuery
+	if query := manifest.QUERY(nil); query != nil && len(query.CANONICAL_QUERY()) > 0 {
+		if parsed, parseErr := indexedRecordQueryFromCanonicalJSON(query.CANONICAL_QUERY()); parseErr == nil {
+			filter = parsed
+		}
+	}
+	var index *DatasetExportIndex
+	// Source-scope snapshots (empty BatchID) may carry paired PublicationCutoff
+	// metadata in the index; ordinary batch publications carry all required
+	// listing metadata inside the signed DPM.
+	if filter.BatchID == "" || datasetManifestRecords(manifest) <= 0 {
+		indexBytes, held, readErr := readLocalPublicationContent(store, indexAsset.CID, datasetStatedBytes(indexAsset))
+		if readErr != nil || !held {
+			return nil, readErr
+		}
+		if err := verifyBytesCIDAndHash("index", indexBytes, indexAsset.CID, indexAsset.SHA256); err != nil {
+			return nil, err
+		}
+		parsed, parseErr := parseDatasetExportIndexBytes(indexBytes)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		index = parsed
+	}
+	pub := datasetShardPublicationFromMaterialized(opts.PNM, manifest, manifestCID, shardAsset, indexAsset, shardSize, shardAsset.SHA256, indexAsset.SHA256, index)
+	if pub.SchemaName == "" || pub.RecordCount <= 0 || pub.Limit <= 0 || pub.ShardCID == "" || pub.IndexCID == "" {
+		return nil, nil
+	}
+	retirement, retired, err := store.DatasetPublicationReplayState(DatasetPublicationRetirementKey(pub))
+	if err != nil {
+		return nil, fmt.Errorf("read publication retirement: %w", err)
+	}
+	if retired && retirement.State == "retired" {
+		return nil, nil
+	}
+	if err := store.UpsertDatasetShardPublication(pub); err != nil {
+		return nil, fmt.Errorf("record materialized dataset shard publication: %w", err)
+	}
+	return &DatasetPublicationReplayResult{
+		ManifestCID:     manifestCID,
+		ShardCID:        pub.ShardCID,
+		IndexCID:        pub.IndexCID,
+		SchemaName:      pub.SchemaName,
+		RecordCount:     pub.RecordCount,
+		QuerySHA256:     pub.QuerySHA256,
+		ResultSHA256:    pub.ResultSHA256,
+		ProviderID:      pub.ProviderID,
+		SourceName:      pub.SourceName,
+		BatchID:         pub.BatchID,
+		PublishedAt:     pub.PublishedAt,
+		AlreadyImported: true,
+	}, nil
+}
+
+// DatasetManifestLaneFromLocalContent returns the (providerID, sourceName) of
+// manifestCID when its bytes are already held in the local IPFS repository.
+// It performs no network I/O and returns ("", "") if not held locally.
+func DatasetManifestLaneFromLocalContent(store *FlatSQLStore, manifestCID string) (string, string) {
+	if store == nil || strings.TrimSpace(manifestCID) == "" {
+		return "", ""
+	}
+	data, ok, err := readLocalPublicationContent(store, strings.TrimSpace(manifestCID), 1<<20)
+	if err != nil || !ok || len(data) < 8 || !dpm.DPMBufferHasIdentifier(data) {
+		return "", ""
+	}
+	manifest := dpm.GetRootAsDPM(data, 0)
+	providerID, sources := DatasetManifestLanes(manifest)
+	sourceName := ""
+	if len(sources) > 0 {
+		sourceName = sources[0]
+	}
+	return strings.TrimSpace(providerID), strings.TrimSpace(sourceName)
+}
+
+func readLocalPublicationContent(store *FlatSQLStore, cid string, maxBytes int64) ([]byte, bool, error) {
+	size, held := store.PublicationContentHeld(cid)
+	if !held {
+		return nil, false, nil
+	}
+	if maxBytes >= 0 && size > maxBytes {
+		return nil, false, nil
+	}
+	reader, _, err := store.OpenPublicationContent(cid)
+	if err != nil {
+		return nil, false, nil
+	}
+	defer reader.Close()
+	if maxBytes >= 0 {
+		data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+		if err != nil {
+			return nil, false, err
+		}
+		if int64(len(data)) > maxBytes {
+			return nil, false, nil
+		}
+		return data, true, nil
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func datasetShardPublicationFromMaterialized(pnmBytes []byte, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset, shardByteCount int64, shardSHA256, indexSHA256 string, index *DatasetExportIndex) DatasetShardPublication {
+	var filter IndexedRecordQuery
+	var querySHA256, resultSHA256 string
+	if manifest != nil {
+		if query := manifest.QUERY(nil); query != nil {
+			querySHA256 = strings.TrimSpace(string(query.QUERY_SHA256()))
+			resultSHA256 = strings.TrimSpace(string(query.RESULT_SHA256()))
+			if len(query.CANONICAL_QUERY()) > 0 {
+				if parsed, err := indexedRecordQueryFromCanonicalJSON(query.CANONICAL_QUERY()); err == nil {
+					filter = parsed
+				}
+			}
+		}
+	}
+	manifestProvider, manifestSources := DatasetManifestLanes(manifest)
+	manifestSource := ""
+	if len(manifestSources) > 0 {
+		manifestSource = manifestSources[0]
+	}
+	pub := DatasetShardPublication{
+		SchemaName:   strings.TrimSpace(shardAsset.Schema),
+		ProviderID:   strings.TrimSpace(filter.ProviderID),
+		SourceName:   strings.TrimSpace(filter.SourceName),
+		BatchID:      strings.TrimSpace(filter.BatchID),
+		QueryProfile: DatasetPublicationQueryProfile,
+		Offset:       filter.Offset,
+		Limit:        filter.Limit,
+		ByteCount:    shardByteCount,
+		ShardCID:     strings.TrimSpace(shardAsset.CID),
+		IndexCID:     strings.TrimSpace(indexAsset.CID),
+		ManifestCID:  strings.TrimSpace(manifestCID),
+		ShardSHA256:  strings.TrimSpace(shardAsset.SHA256),
+		IndexSHA256:  strings.TrimSpace(indexAsset.SHA256),
+		QuerySHA256:  querySHA256,
+		ResultSHA256: resultSHA256,
+		PublishedAt:  datasetManifestPublishedAt(manifest),
+	}
+	if len(pnmBytes) > 0 {
+		pub.PNMCID = computeCID(pnmBytes)
+	}
+	if index != nil {
+		if strings.TrimSpace(index.SchemaName) != "" {
+			pub.SchemaName = strings.TrimSpace(index.SchemaName)
+		}
+		if strings.TrimSpace(index.ProviderID) != "" {
+			pub.ProviderID = strings.TrimSpace(index.ProviderID)
+		}
+		if strings.TrimSpace(index.SourceName) != "" {
+			pub.SourceName = strings.TrimSpace(index.SourceName)
+		}
+		if strings.TrimSpace(index.BatchID) != "" {
+			pub.BatchID = strings.TrimSpace(index.BatchID)
+		}
+		if index.RecordCount > 0 {
+			pub.RecordCount = index.RecordCount
+		}
+		if strings.TrimSpace(index.ShardSHA256) != "" && pub.ShardSHA256 == "" {
+			pub.ShardSHA256 = strings.TrimSpace(index.ShardSHA256)
+		}
+		if strings.TrimSpace(index.QuerySHA256) != "" {
+			pub.QuerySHA256 = strings.TrimSpace(index.QuerySHA256)
+		}
+		if strings.TrimSpace(index.ResultSHA256) != "" {
+			pub.ResultSHA256 = strings.TrimSpace(index.ResultSHA256)
+		}
+		if index.PublicationCutoff > 0 || index.PublicationSourceCutoff > 0 {
+			cutoff := int64(index.PublicationCutoff)
+			sourceCutoff := int64(index.PublicationSourceCutoff)
+			pub.PublicationCutoff = &cutoff
+			pub.PublicationSourceCutoff = &sourceCutoff
+		}
+	}
+	if pub.SchemaName == "" {
+		pub.SchemaName = strings.TrimSpace(filter.SchemaName)
+	}
+	if pub.ProviderID == "" {
+		pub.ProviderID = strings.TrimSpace(manifestProvider)
+	}
+	if pub.SourceName == "" {
+		pub.SourceName = strings.TrimSpace(manifestSource)
+	}
+	if pub.RecordCount <= 0 {
+		if stated := datasetManifestRecords(manifest); stated > 0 {
+			pub.RecordCount = int(stated)
+		}
+	}
+	if pub.Offset < 0 {
+		pub.Offset = 0
+	}
+	if pub.Limit <= 0 {
+		pub.Limit = pub.RecordCount
+	}
+	if pub.ByteCount <= 0 && shardAsset.Bytes > 0 {
+		pub.ByteCount = int64(shardAsset.Bytes)
+	}
+	if pub.ShardSHA256 == "" {
+		pub.ShardSHA256 = strings.TrimSpace(shardSHA256)
+	}
+	if pub.IndexSHA256 == "" {
+		pub.IndexSHA256 = strings.TrimSpace(indexSHA256)
+	}
+	if pub.ResultSHA256 == "" {
+		pub.ResultSHA256 = pub.ShardSHA256
+	}
+	return pub
+}
+
+func upsertMaterializedDatasetShardPublication(store *FlatSQLStore, pnmBytes []byte, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset, shardByteCount int64, shardSHA256, indexSHA256 string, index *DatasetExportIndex) error {
+	pub := datasetShardPublicationFromMaterialized(pnmBytes, manifest, manifestCID, shardAsset, indexAsset, shardByteCount, shardSHA256, indexSHA256, index)
+	if pub.SchemaName == "" || pub.RecordCount <= 0 || pub.Limit <= 0 || pub.ShardCID == "" || pub.IndexCID == "" {
+		return nil
+	}
+	if err := store.UpsertDatasetShardPublication(pub); err != nil {
+		return fmt.Errorf("record materialized dataset shard publication: %w", err)
+	}
+	return nil
 }
 
 // recordManifestSourceBatchLicenses copies the license terms a verified DPM
