@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,16 @@ func TestPublicationFollowerListPublishedRealDaemons(t *testing.T) {
 	// sdn_dataset_shard_publications is absent. On restart, stored-PNM catch-up
 	// must backfill the listing row from local Kubo content without re-importing.
 	b.stop(t)
+	inspectionHome := publicationTemp(t, "listpub-inspection")
+	inspectionCache := filepath.Join(inspectionHome, "Library", "Caches")
+	if err := os.MkdirAll(inspectionCache, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(os.Getenv("SDN_E2E_PUBLICATION_AOT_CACHE"), "flatsql-aot"), filepath.Join(inspectionCache, "flatsql-aot")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", inspectionHome)
+	t.Setenv("XDG_CACHE_HOME", os.Getenv("SDN_E2E_PUBLICATION_AOT_CACHE"))
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		t.Fatalf("validator: %v", err)
