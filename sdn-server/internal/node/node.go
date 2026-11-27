@@ -2642,7 +2642,10 @@ func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
 // flowServiceFirstFireDelay lets the node finish coming up before a due
 // retrieval starts pulling. Long enough that a boot is not also a fetch, short
 // enough that "install the bundle, get data" stays true.
-const flowServiceFirstFireDelay = 20 * time.Second
+const (
+	flowServiceFirstFireDelay          = 20 * time.Second
+	defaultFlowServiceExecutionTimeout = 2 * time.Hour
+)
 
 // startFlowServices loads the config-declared timer-served flows (loop C.8a
 // ingest-as-flow) and registers them with the plugin manager so the cron
@@ -2663,10 +2666,15 @@ func (n *Node) startFlowServices() error {
 	if err != nil {
 		return fmt.Errorf("build module node context: %w", err)
 	}
+	execTimeout := n.config.Modules.ScheduledInvokeTimeout
+	if execTimeout <= 0 {
+		execTimeout = defaultFlowServiceExecutionTimeout
+	}
 	deps := flowrt.FlowMountDeps{
-		CapRegistry:    n.buildCapRegistry(),
-		NodeCtx:        nodeCtx,
-		MaxMemoryPages: n.config.Flows.MaxMemoryPages,
+		CapRegistry:      n.buildCapRegistry(),
+		NodeCtx:          nodeCtx,
+		MaxMemoryPages:   n.config.Flows.MaxMemoryPages,
+		ExecutionTimeout: execTimeout,
 		// Startup loads precompiled AOT artifacts when present but never
 		// compiles wasm modules; cache population is a release/prewarm step.
 		AOTCacheDir: flatsqldrv.DefaultAOTCacheDir(),
