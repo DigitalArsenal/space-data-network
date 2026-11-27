@@ -1376,6 +1376,20 @@ func (s *ConcreteDatasetPublicationService) reusableDatasetPublicationResult(
 	if len(pnmRecord.Data) == 0 {
 		return nil, false, fmt.Errorf("load reusable dataset publication PNM: empty record %s", existing.PNMCID)
 	}
+	if s.providerPeerID != "" && strings.TrimSpace(pnmRecord.PeerID) != "" && strings.TrimSpace(pnmRecord.PeerID) != s.providerPeerID {
+		return nil, false, nil
+	}
+	if s.signingKey != nil {
+		if providerPublicKey, ok := s.signingKey.Public().(ed25519.PublicKey); ok && len(providerPublicKey) == ed25519.PublicKeySize {
+			wrappedProviderKey, err := crypto.UnmarshalEd25519PublicKey(providerPublicKey)
+			if err != nil {
+				return nil, false, err
+			}
+			if _, err := channelmodel.VerifySignedPNMEnvelopeWithProviderKey(pnmRecord.Data, wrappedProviderKey); err != nil {
+				return nil, false, nil
+			}
+		}
+	}
 	manifestBytes, err := storage.FetchIPFSBlockByCID(ctx, s.ipfsAPIURL, existing.ManifestCID)
 	if err != nil {
 		return nil, false, fmt.Errorf("load reusable dataset publication DPM: %w", err)
