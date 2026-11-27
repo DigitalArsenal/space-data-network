@@ -143,6 +143,86 @@ const engineStandardCatalogGraph = `
     SQL:string;
     X_FIELD:string;
   }
+  table AIS {
+    EVENT_ID:string;
+    SESSION_ID:string;
+    REQUEST_ID:string;
+    SEQUENCE_NO:uint32;
+    TURN_INDEX:uint32;
+    EVENT_KIND:byte;
+    RECEIVED_UTC:string;
+    RECEIVED_UNIX_MS:int64;
+    CLIENT_UTC:string;
+    CLIENT_UNIX_MS:int64;
+    CLIENT_IP:string;
+    CLIENT_IP_HASH:string;
+    REMOTE_ADDR:string;
+    X_FORWARDED_FOR:string;
+    CF_RAY:string;
+    CF_COUNTRY:string;
+    CF_REGION:string;
+    CF_CITY:string;
+    CF_ASN:string;
+    CF_TLS_VERSION:string;
+    HTTP_ORIGIN:string;
+    HTTP_REFERER:string;
+    HTTP_USER_AGENT:string;
+    HTTP_ACCEPT_LANGUAGE:string;
+    SEC_CH_UA:string;
+    SEC_CH_UA_PLATFORM:string;
+    SEC_CH_UA_MOBILE:string;
+    SDN_SIGNED_IN:bool;
+    SDN_IDENTITY_SCHEME:string;
+    SDN_SIGN_IN_METHOD:string;
+    SDN_PUBLIC_KEY_HEX:string;
+    SDN_KEY_ID:string;
+    SDN_DERIVATION_PATH:string;
+    EXTERNAL_WALLET_ADDRESS:string;
+    EXTERNAL_WALLET_NAME:string;
+    EXTERNAL_WALLET_CHAIN:string;
+    FINGERPRINT_HASH:string;
+    INSTALL_ID:string;
+    PAGE_URL:string;
+    APP_NAME:string;
+    APP_VERSION:string;
+    PLATFORM:string;
+    TIMEZONE:string;
+    TZ_OFFSET_MIN:int32;
+    LANGUAGES:string;
+    SCREEN_WIDTH:uint32;
+    SCREEN_HEIGHT:uint32;
+    VIEWPORT_WIDTH:uint32;
+    VIEWPORT_HEIGHT:uint32;
+    COLOR_DEPTH:uint16;
+    DEVICE_PIXEL_RATIO:float;
+    HARDWARE_CONCURRENCY:uint16;
+    DEVICE_MEMORY_GB:float;
+    MAX_TOUCH_POINTS:uint16;
+    WEBGL_VENDOR:string;
+    WEBGL_RENDERER:string;
+    CANVAS_HASH:string;
+    AUDIO_HASH:string;
+    FONT_HASH:string;
+    COOKIES_ENABLED:bool;
+    DO_NOT_TRACK:string;
+    WEBDRIVER:bool;
+    LOCAL_STORAGE_WRITABLE:bool;
+    MODEL_PROVIDER:string;
+    MODEL_ID:string;
+    PROMPT_TEXT:string;
+    ANSWER_TEXT:string;
+    SUMMARY_TEXT:string;
+    STATUS:byte;
+    ERROR_CODE:string;
+    ERROR_MESSAGE:string;
+    INPUT_TOKENS:uint32;
+    OUTPUT_TOKENS:uint32;
+    TOTAL_TOKENS:uint32;
+    COST_USD:double;
+    LATENCY_MS:uint32;
+    TOOL_CALL_COUNT:uint32;
+    COLLECTOR_NODE_ID:string;
+  }
   table ANI {
     ID:string;
     SOURCE_ID:string;
@@ -1191,6 +1271,14 @@ const engineStandardCatalogGraph = `
     BSTAR:double;
     HAS_GP:bool;
     RESERVED:[ubyte];
+    OBJECT_TYPE:string;
+    DECAY_DATE:string;
+    MANEUVERABLE:bool;
+    ESTIMATED_DELTA_V_MPS:double;
+    HISTORICAL_DELTA_V_MPS:double;
+    MANEUVER_COUNT:uint;
+    LAST_MANEUVER_EPOCH:string;
+    DELTA_V_AS_OF:string;
   }
   table ETS {
     TRACK_ID:string;
@@ -4213,6 +4301,7 @@ var engineGeneratedStandardBindings = map[string]engineRoutedSchema{
 	"ACW.fbs":  {Table: "ACW", FileID: "$ACW"},
 	"AEM.fbs":  {Table: "AEM", FileID: "$AEM"},
 	"AGR.fbs":  {Table: "AGR", FileID: "$AGR"},
+	"AIS.fbs":  {Table: "AIS", FileID: "$AIS"},
 	"ANI.fbs":  {Table: "ANI", FileID: "$ANI"},
 	"AOF.fbs":  {Table: "AOF", FileID: "$AOF"},
 	"APL.fbs":  {Table: "APL", FileID: "$APL"},

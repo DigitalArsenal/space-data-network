@@ -38,6 +38,9 @@ var sandboxForbidden = regexp.MustCompile(`(?i)\b(pragma\w*|attach|detach|insert
 // store read lock, with a statement timeout, row cap and byte cap. Anything
 // that is not a single SELECT statement is refused before the engine sees it.
 func (s *FlatSQLStore) SandboxedSelect(ctx context.Context, sql string, caps SandboxSelectCaps) (*SandboxSelectResult, error) {
+	if err := s.checkSandboxedSQLPrivate(sql); err != nil {
+		return nil, err
+	}
 	stmt := strings.TrimSpace(sql)
 	stmt = strings.TrimSuffix(stmt, ";")
 	if stmt == "" {

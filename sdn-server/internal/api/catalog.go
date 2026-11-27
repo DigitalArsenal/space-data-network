@@ -91,6 +91,9 @@ func (h *CatalogHandler) handleCatalog(w http.ResponseWriter, r *http.Request) {
 
 	schemas := make([]map[string]interface{}, 0, len(ranges))
 	for _, sr := range ranges {
+		if (h.cfg != nil && h.cfg.Storage.IsPrivateSchema(sr.Schema)) || h.store.IsPrivateSchema(sr.Schema) {
+			continue
+		}
 		entry := map[string]interface{}{
 			"name":         sr.Schema,
 			"record_count": sr.RecordCount,

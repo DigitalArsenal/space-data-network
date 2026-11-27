@@ -85,6 +85,7 @@ type ServiceFlow struct {
 	// exclusive_group: one run at a time among them (nil: no group).
 	exclusive      chan struct{}
 	exclusiveGroup string
+	private        bool
 
 	statsMu         sync.Mutex
 	retrievalGate   RetrievalGate
@@ -328,6 +329,26 @@ func (sf *ServiceFlow) SetExclusiveGroup(name string, slot chan struct{}) {
 	sf.statsMu.Lock()
 	defer sf.statsMu.Unlock()
 	sf.exclusiveGroup, sf.exclusive = name, slot
+}
+
+// IsPrivate reports whether this flow service is configured private/unadvertised.
+func (sf *ServiceFlow) IsPrivate() bool {
+	if sf == nil {
+		return false
+	}
+	sf.statsMu.Lock()
+	defer sf.statsMu.Unlock()
+	return sf.private
+}
+
+// SetPrivate marks this flow service private/unadvertised.
+func (sf *ServiceFlow) SetPrivate(private bool) {
+	if sf == nil {
+		return
+	}
+	sf.statsMu.Lock()
+	defer sf.statsMu.Unlock()
+	sf.private = private
 }
 
 // --- plugins.CronProvider interface ---
@@ -1165,6 +1186,9 @@ func LoadFlowServices(services []config.FlowService, deps FlowMountDeps) ([]*Ser
 		}
 		if service.ReleaseAfterRun {
 			sf.SetReleaseAfterRun(true)
+		}
+		if service.Private {
+			sf.SetPrivate(true)
 		}
 		loaded = append(loaded, sf)
 		log.Infof("Flow service %q loaded (%d timers, aot %v, exclusive group %q, release after run %v)", sf.ID(), len(sf.triggers), sf.aot,

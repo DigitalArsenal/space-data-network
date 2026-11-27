@@ -1711,6 +1711,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// drift.
 			flowRouteDecls := make([]gateway.RouteDecl, 0, 8)
 			for _, mf := range n.MountedFlows() {
+				if mf.IsPrivate() {
+					continue
+				}
 				doc := mf.APIDoc()
 				if doc == nil {
 					continue
@@ -1762,6 +1765,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// bootstrap routes — documented in docs/gateway-api.md §6.
 			docFlows := make([]api.FlowDocSource, 0, len(n.MountedFlows()))
 			for _, mf := range n.MountedFlows() {
+				if mf.IsPrivate() {
+					continue
+				}
 				docFlows = append(docFlows, mf)
 			}
 			if docsHandler, err := api.NewDocsHandler(api.DocsHandlerOptions{

@@ -219,6 +219,8 @@ type FlatSQLStore struct {
 	engineHotHydrating atomic.Bool
 	engineHotHydrated  atomic.Bool
 	validator          *sds.Validator
+	privateSchemas     map[string]bool
+	privateTables      map[string]bool
 	dbPath             string
 	basePath           string
 	// localEPMKeyCache memoizes the derived candidate keys for the local-EPM
@@ -415,6 +417,7 @@ type storeConfig struct {
 	deferBootRebuilds         bool
 	auxReplayChunkBytes       int64
 	quotaBytes                int64
+	privateSchemas            []string
 	// format pins the store format (withStoreFormat); 0 decides it by
 	// storeFormatFor.
 	format int
@@ -538,9 +541,17 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	}
 	switch format {
 	case 4, 5:
-		return newFormat4Store(basePath, validator, cfg)
+		store, err := newFormat4Store(basePath, validator, cfg)
+		if err == nil {
+			store.setPrivateSchemas(cfg.privateSchemas)
+		}
+		return store, err
 	case 2:
-		return newFormat2Store(basePath, validator, cfg)
+		store, err := newFormat2Store(basePath, validator, cfg)
+		if err == nil {
+			store.setPrivateSchemas(cfg.privateSchemas)
+		}
+		return store, err
 	}
 	if err := newFormat1RefusesMigratedStore(basePath); err != nil {
 		return nil, err
@@ -687,6 +698,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		checkpointStop:   make(chan struct{}),
 		checkpointDone:   make(chan struct{}),
 	}
+	store.setPrivateSchemas(cfg.privateSchemas)
 	auxiliaryOpened = true
 
 	auxResume := auxiliaryResumeOffset(mark, auxiliaryMetadata)

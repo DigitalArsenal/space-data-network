@@ -529,6 +529,7 @@ func (n *Node) init() error {
 			storage.WithUnlimitedSQLVisibilitySetting(n.config.Storage.UnlimitedSQLVisibility),
 			storage.WithRowCacheBytes(n.config.Storage.RowCacheBytes),
 			storage.WithAuxiliaryReplayChunkBytes(n.config.Storage.AuxiliaryReplayChunkBytes),
+			storage.WithPrivateSchemas(n.config.Storage.PrivateSchemas),
 			storage.WithDeferredBootRebuilds(),
 		}
 		// Store format 2 hands storage.max_size to the partition store's
@@ -2616,6 +2617,9 @@ func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
 		default:
 		}
 
+		if n.config != nil && n.config.Storage.IsPrivateSchema(schema) {
+			continue
+		}
 		topicName := fmt.Sprintf("/spacedatanetwork/sds/%s", schema)
 		topic, err := n.joinAndStoreTopic(schema, topicName)
 		if err != nil {
@@ -5397,6 +5401,9 @@ func (n *Node) ListenAddrs() []multiaddr.Multiaddr {
 func (n *Node) Publish(schema string, data []byte) error {
 	if !n.validator.HasSchema(schema) {
 		return fmt.Errorf("unknown schema: %s", schema)
+	}
+	if n.config != nil && n.config.Storage.IsPrivateSchema(schema) {
+		return fmt.Errorf("schema %s is private and cannot be published to pubsub", schema)
 	}
 	topicName := fmt.Sprintf("/spacedatanetwork/sds/%s", schema)
 	topic, err := n.joinAndStoreTopic(schema, topicName)

@@ -75,6 +75,9 @@ func BuildInstalledModulesFrame(snapshot plugins.RuntimeSnapshot, providerDomain
 	offsets := make([]flatbuffers.UOffsetT, 0, len(modules))
 	for i := range modules {
 		module := &modules[i]
+		if module.Private {
+			continue
+		}
 		moduleID := strings.TrimSpace(module.ID)
 		pluginID := moduleID
 		name := ""
