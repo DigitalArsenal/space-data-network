@@ -2942,6 +2942,24 @@ func (s *FlatSQLStore) f2QueryRecentRecords(schemaName string, limit int) ([]*Re
 		format2.QuoteIdent(format2.TypeName(schemaName)), limit), nil, true)
 }
 
+// f2QueryRecentDatasetPublicationPNMs returns the newest PNM.fbs records whose
+// FILE_ID identifies a dataset publication ("%.fbs%").
+func (s *FlatSQLStore) f2QueryRecentDatasetPublicationPNMs(limit int) ([]*Record, error) {
+	if err := s.f2Closed(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 250000 {
+		limit = 250000
+	}
+	return s.f2Select("PNM.fbs", fmt.Sprintf(
+		"SELECT %s FROM %s WHERE FILE_ID LIKE ?1 ORDER BY _gseq DESC LIMIT ?2",
+		format2.RecColumns, format2.QuoteIdent(format2.TypeName("PNM.fbs")),
+	), []format2.Cell{format2.Text("%.fbs%"), format2.Int(int64(limit))}, true)
+}
+
 func (s *FlatSQLStore) f2QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record, error) {
 	if err := s.f2Closed(); err != nil {
 		return nil, err

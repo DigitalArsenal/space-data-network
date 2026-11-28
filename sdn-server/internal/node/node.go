@@ -1749,7 +1749,7 @@ func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
 	}
 	if n.store != nil {
 		opts.RecentPNMs = func(limit int) []caps.P2PPNMRecord {
-			records, err := n.store.QueryRecentRecords("PNM.fbs", limit)
+			records, err := n.store.QueryRecentDatasetPublicationPNMs(limit)
 			if err != nil {
 				return nil
 			}
@@ -3125,7 +3125,7 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 	if limit <= 0 {
 		limit = datasetPublicationCatchupLimit
 	}
-	records, err := n.store.QueryRecentRecords("PNM.fbs", limit)
+	records, err := n.store.QueryRecentDatasetPublicationPNMs(limit)
 	if err != nil {
 		return 0, fmt.Errorf("query stored PNM records: %w", err)
 	}

@@ -61,6 +61,7 @@ type recordBackend interface {
 	queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error)
 	QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record, error)
 	QueryRecentRecords(schemaName string, limit int) ([]*Record, error)
+	QueryRecentDatasetPublicationPNMs(limit int) ([]*Record, error)
 	// FullTablePageWithCursor takes the normalized query.
 	FullTablePageWithCursor(query FullTablePageQuery) (FullTablePageResult, error)
 	Query(schemaName, whereClause string, args ...interface{}) ([][]byte, error)

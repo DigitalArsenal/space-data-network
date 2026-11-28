@@ -144,6 +144,10 @@ func (b format2Backend) QueryRecentRecords(schemaName string, limit int) ([]*Rec
 	return b.s.f2QueryRecentRecords(schemaName, limit)
 }
 
+func (b format2Backend) QueryRecentDatasetPublicationPNMs(limit int) ([]*Record, error) {
+	return b.s.f2QueryRecentDatasetPublicationPNMs(limit)
+}
+
 func (b format2Backend) FullTablePageWithCursor(query FullTablePageQuery) (FullTablePageResult, error) {
 	return b.s.f2FullTablePage(query)
 }

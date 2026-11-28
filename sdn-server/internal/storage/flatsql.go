@@ -4787,6 +4787,45 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	return records, nil
 }
 
+// QueryRecentDatasetPublicationPNMs returns the newest PNM.fbs records whose
+// FILE_ID identifies a dataset publication (containing ".fbs"), ordered newest
+// first regardless of whether other PNM.fbs rows carry source tags.
+func (s *FlatSQLStore) QueryRecentDatasetPublicationPNMs(limit int) ([]*Record, error) {
+	if s.rb != nil {
+		return s.rb.QueryRecentDatasetPublicationPNMs(limit)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tableName, err := s.recordReadSource("PNM.fbs")
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 250000 {
+		limit = 250000
+	}
+
+	query := fmt.Sprintf(`
+		SELECT d.cid, d.peer_id, d.timestamp,
+		       d.data, d.signature_hex,
+		       '', '', '', '', '', '', '', NULL
+		FROM %s d
+		INNER JOIN sdn_record_index idx
+		        ON idx.schema_name = ? AND idx.cid = d.cid
+		WHERE idx.entity_id LIKE ?
+		ORDER BY idx.rowid DESC
+		LIMIT ?
+	`, tableName)
+	rows, err := s.db.Query(query, "PNM.fbs", "%.fbs%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("recent dataset publication PNM query failed: %w", err)
+	}
+	return s.scanRecentRecords("PNM.fbs", rows)
+}
+
 // DataSummary returns aggregate FlatSQL record counts and raw byte totals.
 type unsummarizedCount struct {
 	count int64
