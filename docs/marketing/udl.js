@@ -20,8 +20,13 @@
   const f = { group: "All groups", q: "", plan: "", only: "" };
 
   const types = (rows) => rows.reduce((n, r) => n + r.udl.length, 0);
-  const openTiers = ["free", "analysis", "ai"];
-  const edgeOnly = (r) => openTiers.every((t) => r.plans[t] === "—");
+  const planVal = (r, id) => {
+    if (r.plans[id] !== undefined) return r.plans[id];
+    const p = PLANS.find((x) => x.id === id);
+    return p?.inherits ? planVal(r, p.inherits) : "—";
+  };
+  const openTiers = ["free", "plus", "analysis", "ai"];
+  const edgeOnly = (r) => openTiers.every((t) => planVal(r, t) === "—");
   const publicEquivalent = (r) => r.plans.free !== "—";
   const gap = (r) => !r.sds.length;
 
@@ -59,7 +64,7 @@
     const s = f.q.trim().toLowerCase();
     return data.rows.filter((r) =>
       (f.group === "All groups" || r.group.includes(f.group)) &&
-      (!f.plan || r.plans[f.plan] !== "—") &&
+      (!f.plan || planVal(r, f.plan) !== "—") &&
       (f.only !== "edge" || edgeOnly(r)) && (f.only !== "gap" || gap(r)) &&
       (!s || r.label.toLowerCase().includes(s) || r.udl.some((u) => u.includes(s)) ||
         r.sds.some((c) => c.toLowerCase() === s) || r.note.toLowerCase().includes(s)));
@@ -74,7 +79,7 @@
       html += `<tr><th scope="row"><b>${esc(r.label)}</b><code>${r.udl.map(esc).join(", ")}</code></th>
         <td class="ud-sds">${r.sds.length ? r.sds.map(esc).join(" ") : `<span class="ud-gap">No SDS yet</span>`}</td>
         <td>${esc(r.group)}</td>
-        ${PLANS.map((p) => `<td class="ud-t">${chip(r.plans[p.id])}</td>`).join("")}
+        ${PLANS.map((p) => `<td class="ud-t">${chip(planVal(r, p.id))}</td>`).join("")}
         <td class="ud-note">${esc(r.note)}</td></tr>`;
     }
     $("[data-udl=table]").innerHTML = `<table class="ud-table"><thead><tr><th scope="col">Data</th><th scope="col">SDS record</th><th scope="col">Group</th>

@@ -39,12 +39,38 @@
 .mp-ap-points article { border-top: 1px solid var(--border-strong); padding-top: 16px; min-width: 0; }
 .mp-ap-points h3 { font-size: 17px; margin-bottom: 8px; }
 .mp-ap-points p { color: var(--text-2); font-size: 14px; line-height: 1.65; }
+/* SpaceEdge Flagship Program section and SBIR/TACFI Acquisition grid */
+.mp-flagship { border-top: 1px solid var(--border); padding-top: 44px; }
+.mp-flagship-head { display: flex; flex-wrap: wrap; gap: 20px 36px; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
+.mp-flagship-head > div:first-child { flex: 1 1 560px; min-width: 0; }
+.mp-flagship-mark { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 8px 0 14px; font-size: clamp(24px, 3vw, 32px); letter-spacing: -.02em; }
+.mp-flagship-mark .se-wordmark { font-size: clamp(24px, 3vw, 32px); }
+.mp-flagship-sub { display: block; width: 100%; font-size: clamp(22px, 2.6vw, 28px); font-weight: 700; color: var(--text); letter-spacing: -.02em; margin-top: 4px; }
+.mp-flagship-lede, .mp-acq-lede { font-size: 17px; line-height: 1.65; color: var(--text-2); max-width: 880px; margin: 0; }
+.mp-flagship-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding-top: 8px; }
+.mp-pillars, .mp-acq-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
+.mp-pillar, .mp-acq-card { display: flex; flex-direction: column; gap: 10px; padding: 22px 24px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); min-width: 0; }
+.mp-pillar { border-top: 3px solid var(--edge); }
+.mp-acq-card { border-top: 3px solid var(--accent); }
+.mp-pillar-tag, .mp-acq-vehicle { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--edge); margin: 0; }
+.mp-acq-vehicle { color: var(--accent); }
+.mp-pillar h3, .mp-acq-card h3 { font-size: 20px; line-height: 1.3; margin: 0; }
+.mp-pillar-summary, .mp-acq-summary { font-size: 14px; line-height: 1.6; color: var(--text-2); margin: 0; }
+.mp-pillar ul, .mp-acq-card ul { margin: 4px 0 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; color: var(--text-2); }
+.mp-pillar li + li, .mp-acq-card li + li { margin-top: 6px; }
+.mp-acq { border-top: 1px solid var(--border); padding-top: 44px; }
+.mp-acq-cta { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: center; justify-content: space-between; margin-top: 20px; padding: 22px 26px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--wash); }
+.mp-acq-cta > div { flex: 1 1 460px; min-width: 0; }
+.mp-acq-cta h3 { font-size: 18px; margin: 0 0 6px; }
+.mp-acq-cta p { font-size: 14px; line-height: 1.6; color: var(--text-2); margin: 0; }
+.mp-acq-cta .mp-nav { margin-top: 0; }
 /* A plan priced by contact (SpaceEdge) sits in its own band under the four plans */
 .mp-edge:empty { display: none; }
-.mp-band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 40px; align-items: start; margin-top: 16px; padding: 24px 28px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); }
+.mp-band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 40px; align-items: start; margin-top: 16px; padding: 24px 28px; border: 1px solid var(--border-strong); border-top: 3px solid var(--edge); border-radius: 12px; background: var(--panel); }
 .mp-band > div { display: grid; gap: 12px; justify-items: start; }
 .mp-band h3 { display: flex; align-items: center; gap: 12px; }
 .mp-band h3 .se-wordmark { font-size: 24px; }
+.mp-band .mp-price strong { font-size: 26px; }
 .mp-band .mp-summary { min-height: 0; color: var(--text-2); }
 .mp-band ul { margin: 0; padding-left: 18px; font-size: 14px; color: var(--text-2); line-height: 1.6; }
 .mp-band li + li { margin-top: 8px; }
@@ -81,12 +107,12 @@
 .mp-details > summary { cursor: pointer; font-weight: 600; }
 .mp-nav a:focus-visible, .mp-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
 @media (max-width: 1100px) { .mp-plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } .mp-rights-group[data-rights="general"] ul { columns: 2; } }
-@media (max-width: 900px) { .mp-ap-points, .mp-band { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .mp-ap-points, .mp-band, .mp-pillars, .mp-acq-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) {
   .mp-hero { padding: 32px 0 20px; }
   .mp-lede { font-size: 16px; }
-  .mp-band { padding: 20px; }
-  .mp-plans, .mp-talking, .mp-rights { grid-template-columns: 1fr; }
+  .mp-band, .mp-pillar, .mp-acq-card, .mp-acq-cta { padding: 18px; }
+  .mp-plans, .mp-talking, .mp-rights, .mp-pillars, .mp-acq-grid { grid-template-columns: 1fr; }
   .mp-rights-group[data-rights="general"] ul { columns: 1; }
   .mp-summary { min-height: 0; }
   .mp-table th, .mp-table td { padding: 12px 10px; font-size: 13px; }

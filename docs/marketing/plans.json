@@ -1,10 +1,96 @@
 {
-  "version": 3,
-  "updated": "2026-11-08",
+  "version": 4,
+  "updated": "2026-11-28",
   "currency": "USD",
-  "headline": "The entire catalog, free. Engineering answers when you need them.",
-  "intro": "SpaceAware puts satellites, Earth, weather and the solar system in one workspace in your browser. Public data stays free and visible without signing in. Plans add the analysis modules, and AI that runs them for you.",
-  "dataRule": "Public records stay free and visible without signing in, each with its credit and terms. Plans pay for processing, never for the records themselves, and paying does not change any source's terms. Every source carries one rights class.",
+  "headline": "Tactical Space C2 and deterministic physics. Open to verify, built to field.",
+  "intro": "Edgesource builds SpaceEdge for DoD, intelligence and prime programs on top of SpaceAware, the live browser workspace anyone can verify without signing in. Every orbit, sensor volume, RF link budget and conjunction study runs on deterministic WebAssembly physics modules, canonical Space Data Standards (SDS) FlatBuffers and the SDN-AP propagator—deployable from an open browser to an air-gapped tactical node.",
+  "flagshipLede": "While vendors pitch generative-AI slideware and legacy desktop tools charge tens of thousands per seat, Edgesource delivers an operational 4D astrodynamics, sensor/EW and conjunction engine that runs identically in an open browser, on a tactical edge server, or inside an air-gapped SCIF.",
+  "pillars": [
+    {
+      "tag": "Seat-License Displacement",
+      "title": "Eliminate the legacy desktop per-seat tax",
+      "summary": "Replace $15k–$50k/seat desktop astrodynamics installs with OrbPro, a zero-install 4D engine running directly in an accredited Chromium browser with zero external-origin bytes.",
+      "points": [
+        "Render the entire catalog, phased-array/EO/IR/RF sensor volumes ($SEN) and solar-system bodies at high frame rates",
+        "Interactive RIC-frame Rendezvous & Proximity Operations (RPO) and burn-sequence targeting in the browser",
+        "Command-wide or program-wide site deployment without per-operator seat lock-in"
+      ]
+    },
+    {
+      "tag": "Tactical Edge & SCIF Deployment",
+      "title": "Air-gapped SDN node and resilient mesh sync",
+      "summary": "Deploy a single self-contained binary and signed WebAssembly module bundle onto SIPR, JWICS, CDAO environments, shipboard servers or disconnected DIL links.",
+      "points": [
+        "Ingest customer-authorized Unified Data Library (UDL) feeds and local sensors on the customer's own node",
+        "Cache signed SDS FlatBuffer shards locally in FlatSQL with zero external network calls",
+        "Synchronize updates peer-to-peer via $PNM notifications across contested or intermittent links"
+      ]
+    },
+    {
+      "tag": "AI-Ready Execution Bus",
+      "title": "Deterministic physics substrate for autonomous C2",
+      "summary": "Generative AI cannot guess orbital mechanics, covariance realism or RF link budgets in a battle-management loop. SpaceEdge provides the deterministic tool layer AI agents call.",
+      "points": [
+        "Isomorphic wasm32-wasip1-threads modules produce byte-identical answers in browser, WasmEdge and native hosts",
+        "60+ auditable modules covering orbit determination, conjunction Pc, maneuver targeting and sensor tasking",
+        "Human-on-the-loop 4D console shares the exact binary state vector and FlatSQL store as autonomous agents"
+      ]
+    },
+    {
+      "tag": "Multi-Domain Convergence",
+      "title": "Space Domain Awareness + EW / Spectrum in one workspace",
+      "summary": "Unify orbital custody and maneuver indications & warning with electromagnetic spectrum operations, backed by Edgesource Corporation's cleared defense engineering footprint.",
+      "points": [
+        "Physical RF link budgets ($RFB), antenna patterns, rain/cloud/gaseous loss and terrain diffraction",
+        "Co-channel interference, jamming geometry and TDOA/FDOA emitter geolocation workflows",
+        "METOC cloud and sea-state layers tied directly to optical and RF collection windows"
+      ]
+    }
+  ],
+  "acquisitionLede": "Every core engine layer—OrbPro 4D visualization, SDN-AP propagation, FlatSQL local storage and 60+ signed WebAssembly physics modules—is built and verifiable today. Government funds go directly to sponsor-specific sensor onboarding, UDL workflows, accreditation and tactical fielding rather than from-scratch software R&D.",
+  "acquisition": [
+    {
+      "vehicle": "SBIR / STTR Phase I, II & Direct-to-Phase-II",
+      "title": "Rapid prototype adaptation on a live baseline",
+      "summary": "Start day one from a live 4D engine and validated WebAssembly module catalog. Scope Phase I/II deliverables to sponsor-specific sensor models, UDL topics, threat kinematics and operator CONOPS.",
+      "deliverables": [
+        "Custom WASM physics, sensor ($SEN) and EW ($RFB) module development",
+        "Sponsor UDL account integration and automated SDS FlatBuffer ingest pipelines",
+        "Live interactive browser deliverables verifiable by TPOCs at every milestone"
+      ]
+    },
+    {
+      "vehicle": "TACFI / STRATFI & Phase III Sole-Source",
+      "title": "Operational transition without re-competition",
+      "summary": "Scale proven SBIR capabilities directly into operational commands (USSPACECOM, SSC, AFRL, NRO, Service Battle Labs) under non-competitive Phase III authority and matched funding.",
+      "deliverables": [
+        "Command-wide or enterprise SpaceEdge node and OrbPro seat licensing",
+        "High-density GPU SDN-AP catalog maintenance and conjunction screening",
+        "Dedicated cleared Edgesource field engineering and operational sustainment"
+      ]
+    },
+    {
+      "vehicle": "Defense Prime Subcontracts & OEM SDK",
+      "title": "Embeddable 4D Space C2 & physics subsystem",
+      "summary": "Drop OrbPro, canonical SDS FlatBuffer schemas and signed WASM astrodynamics/EW modules straight into prime BMC3, Golden Dome, C4ISR and training architectures.",
+      "deliverables": [
+        "Zero-copy WebGPU/WebGL2 4D globe and RIC relative-motion views embedded in prime UIs",
+        "Pluggable propagator and sensor-coverage runtime with zero external-origin bytes",
+        "Predictable program licensing without legacy per-seat runtime royalties"
+      ]
+    },
+    {
+      "vehicle": "Legacy Sidecar & Accredited Environments",
+      "title": "Zero-disruption fielding beside existing baselines",
+      "summary": "Run an SDN node as a sidecar beside legacy CCSDS, VCM, TLE and JSpOC systems, translating legacy traffic into signed SDS records while targeting full DoD accreditation.",
+      "deliverables": [
+        "Ed25519 source-signed records, encrypted node transport and offline signed update bundles",
+        "Targets RMF ATO (IATT to ATO), DoD Cloud SRG IL4/IL5/IL6, DISA STIGs and FIPS 140-3",
+        "Designed for CDAO environments: Advana, Open DAGIR and Tradewinds Solutions Marketplace"
+      ]
+    }
+  ],
+  "dataRule": "Public records stay free and visible without a subscription or sign-in, each with its credit and terms. Plans pay for processing and program deployment, never for the public records themselves, and paying does not change any source's terms. Every source carries one rights class.",
   "rights": {
     "general": {
       "title": "General-purpose rights",
@@ -24,8 +110,8 @@
       "id": "free",
       "name": "Free",
       "monthlyPrice": 0,
-      "audience": "Explore",
-      "summary": "See what is happening in space and on Earth.",
+      "audience": "Open verification & baseline",
+      "summary": "Verify the engine live on the entire catalog in your browser with zero sign-in wall.",
       "includes": [
         "The entire satellite catalog, with search and object details",
         "Earth and planetary imagery, terrain and maps",
@@ -33,7 +119,7 @@
         "Stars, galaxies, the Moon and the solar system",
         "Public orbit products and source-based results"
       ],
-      "example": "Look up a satellite, explore the Moon or follow a storm.",
+      "example": "Inspect the live catalog, verify performance or evaluate the 4D workspace in seconds.",
       "cta": "Open SpaceAware",
       "href": "https://spaceaware.io"
     },
@@ -41,14 +127,14 @@
       "id": "plus",
       "name": "Plus",
       "monthlyPrice": 5,
-      "audience": "For enthusiasts",
+      "audience": "Individual operators",
       "inherits": "free",
-      "summary": "Everything in Free, with the weather in high definition.",
+      "summary": "Everything in Free, with high-definition global weather cloud layers.",
       "includes": [
         "High-definition weather clouds",
         "Everything in Free"
       ],
-      "example": "Watch a storm system build in full detail.",
+      "example": "Overlay high-definition cloud cover on ground sites and collection tracks.",
       "note": "High-definition clouds are in build.",
       "cta": "Open SpaceAware",
       "href": "https://spaceaware.io"
@@ -57,9 +143,9 @@
       "id": "analysis",
       "name": "Analysis",
       "monthlyPrice": 29,
-      "audience": "For analysts and engineers",
+      "audience": "Analysts, TPOCs & engineers",
       "inherits": "plus",
-      "summary": "Run the engineering studies yourself.",
+      "summary": "Run deterministic WebAssembly astrodynamics, sensor and RF engineering studies yourself.",
       "includes": [
         "Sensor placement, coverage and observation planning",
         "Custom conjunction and uncertainty studies",
@@ -68,7 +154,7 @@
         "Radio links, interference and network analysis",
         "Everything in Plus"
       ],
-      "example": "Compare where to place a sensor and when it can see an object.",
+      "example": "Model phased-array and optical sensor coverage, RIC maneuvers and RF link margins.",
       "cta": "See Analysis modules",
       "href": "marketing-modules.html#plan=analysis"
     },
@@ -76,9 +162,9 @@
       "id": "ai",
       "name": "AI",
       "monthlyPrice": 79,
-      "audience": "Ask in plain language",
+      "audience": "Deterministic AI orchestration",
       "inherits": "analysis",
-      "summary": "Describe the problem. AI plans the study and runs SpaceAware's modules to answer it.",
+      "summary": "Describe the operational problem. AI configures the scenario and invokes deterministic WASM modules to solve it.",
       "includes": [
         "AI that sets up a whole scenario and runs the Analysis modules for you",
         "Answers from the same deterministic modules you run by hand, with every step shown and repeatable",
@@ -100,18 +186,18 @@
       "mark": { "dark": "marketing/spaceedge-mark-dark.svg", "light": "marketing/spaceedge-mark-light.svg" },
       "monthlyPrice": null,
       "priceLabel": "Contact us",
-      "audience": "Government programs",
+      "audience": "DoD, IC, SBIR/TACFI & Prime Programs",
       "inherits": "ai",
-      "summary": "Everything in AI, on a program's own authorized data, deployed where the program needs it.",
+      "summary": "The complete operational stack—OrbPro, SDN-AP, air-gapped SDN nodes, space combat modules and UDL integration—deployed on your program's network.",
       "includes": [
-        "Space combat scenarios and analysis",
-        "Unified Data Library (UDL) access through the customer's own account",
-        "The customer's authorized data and permissions",
-        "Deployment and support scoped to the program"
+        "Space combat, RPO threat characterization and EW/spectrum operations",
+        "Unified Data Library (UDL) ingest through the customer's own authorized account",
+        "Air-gapped SIPR/JWICS/tactical SDN node deployment with zero external network calls",
+        "SBIR Phase I/II/III, TACFI/STRATFI, OEM prime embedding and cleared Edgesource engineering support"
       ],
-      "example": "Bring a program's authorized UDL data into its mission workspace.",
-      "cta": "Discuss SpaceEdge",
-      "href": "mailto:tj@edgesource.com?subject=SpaceEdge"
+      "example": "Field an air-gapped Space C2 node or transition an SBIR/TACFI prototype to operations.",
+      "cta": "Discuss SpaceEdge Program",
+      "href": "mailto:tj@edgesource.com?subject=SpaceEdge%20Program%20%2F%20SBIR%20%2F%20TACFI"
     }
   ],
   "capabilities": [
@@ -151,32 +237,32 @@
       "plan": "ai"
     },
     {
-      "name": "Space combat",
-      "description": "Program-specific space combat scenarios and analysis.",
+      "name": "Space combat & EW operations",
+      "description": "Program-specific space combat scenarios, threat characterization and tactical C2.",
       "plan": "spaceedge"
     },
     {
-      "name": "UDL",
-      "description": "Connect authorized government data through the customer's UDL account.",
+      "name": "UDL & air-gapped SDN nodes",
+      "description": "Connect authorized UDL accounts and deploy self-contained SDN nodes on classified or tactical networks.",
       "plan": "spaceedge"
     }
   ],
   "talkingPoints": [
     {
-      "title": "Start with what the customer wants to do",
-      "text": "Explore data: Free. Weather in high definition: Plus. Run engineering studies: Analysis. Have AI run them: AI. Space combat or UDL: SpaceEdge."
+      "title": "Lead with SpaceEdge and the $5M/yr program model",
+      "text": "SpaceAware's free open catalog is the instant proof that separates us from AI vaporware and legacy slideware. SpaceEdge—funded via SBIR Phase I/II/III, TACFI/STRATFI, prime OEM subcontracts and enterprise node licenses—is the core revenue engine for Edgesource."
     },
     {
-      "title": "Keep the data free",
-      "text": "Free and non-commercial data capabilities stay in Free. Paid plans add processing, software tools and workflows; they do not sell access to those datasets or expand their usage rights."
+      "title": "Displace legacy per-seat desktop taxes & power autonomous C2",
+      "text": "DoD and primes spend tens of millions on desktop astrodynamics seats that cannot run in a zero-install SCIF browser or serve as a deterministic tool bus for AI agents. OrbPro + SDN-AP + isomorphic WASM modules solve both."
+    },
+    {
+      "title": "Keep public data free as our zero-friction evaluation funnel",
+      "text": "Any TPOC, evaluator or prime engineer can open spaceaware.io in three seconds without signing in. Paid plans and SpaceEdge contracts sell deterministic processing, UDL integration, air-gapped deployment and program execution—never public datasets."
     },
     {
       "title": "Use the right product name",
-      "text": "SpaceAware is the workspace. Space Data Network carries data and software. SDN-AP is the propagator. OrbPro is the visualization engine. SpaceEdge is the government offering."
-    },
-    {
-      "title": "Keep government separate",
-      "text": "The public plans page shows SpaceEdge in its own band below the four plans. Lead with SpaceEdge only with government buyers."
+      "text": "SpaceEdge is the government and prime program offering by Edgesource Corporation. SpaceAware is the live workspace. Space Data Network (SDN) carries signed data and WASM modules. SDN-AP is the propagator. OrbPro is the 4D visualization engine."
     }
   ]
 }

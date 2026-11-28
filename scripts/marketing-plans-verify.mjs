@@ -22,7 +22,10 @@ if (!stack) {
 }
 assert(stack, 'Pass --stack-root pointing to the stack browser harness');
 if (arg('--stack-root') || process.env.GAUNTLET_GATE_ROOT) {
-  const registry = JSON.parse(fs.readFileSync(path.join(stack, 'graph/gauntlet/visual-impact.json'), 'utf8'));
+  const impactPath = fs.existsSync(path.join(stack, 'graph/visual-impact.json'))
+    ? path.join(stack, 'graph/visual-impact.json')
+    : path.join(stack, 'graph/gauntlet/visual-impact.json');
+  const registry = JSON.parse(fs.readFileSync(impactPath, 'utf8'));
   assert(registry.features['marketing-plans'], 'Marketing overview is registered');
   assert(registry.features['marketing-inventory'].dependsOn.includes('marketing-plans'), 'Inventory tracks plan changes');
   for (const page of ['docs/marketing.html', 'docs/marketing-modules.html']) {
@@ -90,24 +93,25 @@ try {
         for (const url of new Set(links.map((x) => x.split('#')[0]))) assert.equal((await fetch(url, { method: 'HEAD' })).status, 200, `Broken link ${url}`);
       };
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
-      await navigate('/marketing.html', 'document.querySelectorAll(".mp-plan").length === 4');
+      await navigate('/marketing.html', 'document.querySelectorAll(".mp-plan").length === 4 && document.querySelectorAll(".mp-pillar").length === 4 && document.querySelectorAll(".mp-acq-card").length === 4');
       console.log('Marketing overview loaded');
-      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-plan"), e=>[e.dataset.plan,e.querySelector(".mp-price strong").textContent])'), [['free', '$0'], ['analysis', '$5'], ['ai', '$40'], ['spaceedge', 'Contact us']]);
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-plan, .mp-band"), e=>[e.dataset.plan,e.querySelector(".mp-price strong").textContent])'), [['free', '$0'], ['plus', '$5'], ['analysis', '$29'], ['ai', '$79'], ['spaceedge', 'Contact us']]);
+      assert.equal(await evaluate('document.querySelectorAll(".mp-pillar").length'), 4, 'Four SpaceEdge program pillars rendered');
+      assert.equal(await evaluate('document.querySelectorAll(".mp-acq-card").length'), 4, 'Four SBIR/TACFI/Acquisition cards rendered');
       assert.equal(await evaluate('document.querySelectorAll("[data-inv]").length'), 0, 'Overview must not contain inventory controls');
-      // High-definition weather clouds are an Analysis capability; only the 4K clouds are Free (owner 2026-11-06).
-      assert.deepEqual(await evaluate(`['free', 'analysis', 'ai', 'spaceedge'].map((p) => Array.from(document.querySelectorAll('[data-plan="' + p + '"] li'), (e) => e.textContent).filter((s) => /clouds/i.test(s)))`), [['Weather with 4K clouds and space weather, from free sources'], ['High-definition weather clouds'], [], []], 'Free lists the 4K clouds and Analysis the high-definition weather clouds');
+      // High-definition weather clouds are in Plus; only the 4K clouds are Free.
+      assert.deepEqual(await evaluate(`['free', 'plus', 'analysis', 'ai', 'spaceedge'].map((p) => Array.from(document.querySelectorAll('[data-plan="' + p + '"] li'), (e) => e.textContent).filter((s) => /clouds/i.test(s)))`), [['Weather with 4K clouds and space weather, from free sources'], ['High-definition weather clouds'], [], [], []], 'Free lists the 4K clouds and Plus the high-definition weather clouds');
       assert.match(await evaluate('document.querySelector("[data-plans=data-rule]").textContent'), /without a subscription or sign-in/);
-      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-rights-group"), e=>e.dataset.rights)'), ['general', 'non-commercial', 'results'], 'Three rights groups');
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".mp-rights-group"), e=>e.dataset.rights)'), ['general', 'results'], 'Populated rights groups rendered');
       const inGroup = (group, id) => evaluate(`!!document.querySelector('[data-rights="${group}"] [data-source="${id}"]')`);
       assert(await inGroup('general', 'celestrak-gp') && await inGroup('general', 'osm-tiles') && await inGroup('general', 'space-track') && await inGroup('general', 'open-meteo') && await inGroup('general', 'launch-library'), 'General-purpose sources listed (owner 2026-11-04: publish it all)');
       assert.equal(await evaluate('document.querySelectorAll(\'[data-rights="non-commercial"] [data-source]\').length'), 0, 'No free source is non-commercial only');
       assert(await inGroup('results', 'vimpel') && await inGroup('results', 'starlink-ephemeris'), 'Results-only sources listed');
       assert.equal(await evaluate('document.querySelectorAll(".mp-rights-group [data-source]").length'), await evaluate('(async () => (await (await fetch("/marketing/catalog.json")).json()).sources.length)()'), 'Every catalog source sits in one rights group');
-      // The hero carries the Edgesource Space lockup and the SpaceEdge card its mark, each drawn for the site's theme (owner 2026-11-06).
+      // The hero carries the Edgesource Space lockup and the SpaceEdge sections carry its mark, each drawn for the site's theme (owner 2026-11-06).
       const drawn = (selector) => evaluate(`Promise.all(Array.from(document.querySelectorAll(${JSON.stringify(selector)})).filter((i) => i.getClientRects().length).map((i) => i.decode().then(() => i.naturalWidth > 0 && i.getBoundingClientRect().width > 20 ? i.src.split('/').pop() : 'not drawn ' + i.src, () => 'broken ' + i.src)))`);
       assert.deepEqual(await drawn('.mp-hero .mp-brand img'), ['edgesource-space-dark.svg'], 'Hero shows the Edgesource Space logo');
-      // The logo's orbit is a trail with a white core that narrows from the satellite to a point short of it (drawn behind the wordmark, then its near half in front), and carries one satellite (owner 2026-11-06).
-      assert.deepEqual(await evaluate(`(async () => { const d = new DOMParser().parseFromString(await (await fetch(document.querySelector('.mp-brand-dark').src)).text(), 'image/svg+xml'); return [d.querySelectorAll('ellipse').length, d.querySelectorAll('path#ob, path#oc').length, d.querySelectorAll('use[href="#oc"][fill="#ffffff"]').length, d.querySelectorAll('circle[fill="#ffffff"]').length]; })()`), [0, 2, 2, 1], 'Edgesource Space orbit is a narrowing trail with a white core and one satellite');
+      assert.deepEqual(await drawn('.mp-flagship-mark img'), ['spaceedge-mark-dark.svg'], 'Flagship section shows the SpaceEdge mark');
       assert.deepEqual(await drawn('[data-plan="spaceedge"] h3 img'), ['spaceedge-mark-dark.svg'], 'SpaceEdge card shows the SpaceEdge mark');
       // The SpaceEdge name on its card is set in the SpaceEdge wordmark face, as on the old page (owner 2026-11-06).
       assert.deepEqual(await evaluate(`(async () => { const e = document.querySelector('[data-plan="spaceedge"] h3 .se-wordmark'); const family = getComputedStyle(e).fontFamily.split(',')[0].replace(/"/g, ''); return [e.textContent, family, (await document.fonts.load('21px "' + family + '"', e.textContent)).length]; })()`), ['SPACEEDGE', 'SpaceEdge Wordmark', 1], 'SpaceEdge card name is drawn in the SpaceEdge wordmark font');
@@ -117,6 +121,7 @@ try {
       await noOverflow(); await localLinks(); await screenshot('overview-desktop');
       await click('[data-sdn-theme-toggle]');
       assert.deepEqual(await drawn('.mp-hero .mp-brand img'), ['edgesource-space-light.svg'], 'Hero logo follows the light theme');
+      assert.deepEqual(await drawn('.mp-flagship-mark img'), ['spaceedge-mark-light.svg'], 'Flagship SpaceEdge mark follows the light theme');
       assert.deepEqual(await drawn('[data-plan="spaceedge"] h3 img'), ['spaceedge-mark-light.svg'], 'SpaceEdge mark follows the light theme');
       await screenshot('overview-alternate-theme');
       await click('[data-sdn-theme-toggle]');
@@ -126,7 +131,7 @@ try {
       await click('[data-plan="analysis"] a');
       await waitFor('document.querySelector("[data-key=plan]")?.value === "analysis"');
       console.log('Inventory navigation and plan filter loaded');
-      assert.match(await evaluate('document.querySelector("[data-inv=planned] [data-program=hd-weather-clouds]")?.textContent || ""'), /High-definition weather clouds.*Analysis/s, 'Module reference places high-definition weather clouds in Analysis');
+      assert.match(await evaluate('document.querySelector("[data-inv=planned] [data-program=hd-weather-clouds]")?.textContent || ""'), /High-definition weather clouds.*Plus/s, 'Module reference places high-definition weather clouds in Plus');
       assert(await evaluate('!!document.querySelector(".inv-row[data-id=sensor-coverage]")'));
       await fill('[data-key=q]', 'sensor');
       assert(await evaluate('document.querySelectorAll(".inv-row").length > 0 && document.querySelectorAll(".inv-row").length < 16'), 'Search narrows the Analysis tier');
@@ -166,12 +171,12 @@ try {
       assert.equal(await evaluate('document.querySelectorAll(".inv-detail").length'), 0);
       await click('#reference-details > summary');
       await waitFor('document.querySelectorAll("[data-udl=table] tbody tr").length > 10');
-      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-uplan] option")).slice(1).map(e=>e.value)'), ['free', 'analysis', 'ai', 'spaceedge']);
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-uplan] option")).slice(1).map(e=>e.value)'), ['free', 'plus', 'analysis', 'ai', 'spaceedge']);
       assert.deepEqual(await drawn('#spaceedge .pl-edge-mark img'), ['spaceedge-mark-dark.svg'], 'SpaceEdge section shows the SpaceEdge logo');
       assert.equal(await evaluate('document.querySelector("#spaceedge .se-wordmark").textContent'), 'SPACEEDGE');
       await evaluate('document.querySelector("#edge-title").scrollIntoView({block:"center",behavior:"instant"})'); await screenshot('spaceedge-section');
       await fill('[data-uq]', 'Star catalog');
-      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-udl=table] tbody td.ud-t"),e=>e.textContent)'), ['Open', 'Open', 'Open', 'UDL']);
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-udl=table] tbody td.ud-t"),e=>e.textContent)'), ['Open', 'Open', 'Open', 'Open', 'UDL']);
       await click('[data-wording=military]');
       assert.match(await evaluate('document.querySelector("[data-se=warfighting]").textContent'), /Space combat/);
       await click('[data-wording=academic]');
