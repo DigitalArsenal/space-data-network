@@ -157,20 +157,24 @@ users:
    - entries from `config.yaml` **cannot be changed or removed through the API or dashboard** — a config row is re-imposed from the file on every read, so changing trust or name means editing the file and restarting;
    - a config row **can** carry trust spellings the API refuses: `never` and `ultimate`.
 
-Once a row exists, the CLI manages it:
+Once a node is running, `spacedatanetwork accounts` manages local login accounts directly over the API:
 
 ```
-# change an operator's trust level (or rename)
-spacedatanetwork accounts trust --xpub <xpub> --level admin
-spacedatanetwork accounts trust --xpub <xpub> --name "New Name"
-
-# view the merged view (peers, operators, and identities that are both)
+# list only local login accounts and the node root wallet
 spacedatanetwork accounts list
+
+# enroll a login account
+spacedatanetwork accounts add --xpub <xpub> --signing-pubkey <64-hex> --name "Ops" --level admin
+
+# modify an existing login account (by --xpub or positional xpub/name/signing-key)
+spacedatanetwork accounts modify <xpub|name> --level admin
+spacedatanetwork accounts modify <xpub|name> --name "New Name"
+
+# remove a login account
+spacedatanetwork accounts remove <xpub|name>
 ```
 
 Every admin command authenticates by signing in as the node's own root key against the live daemon, or pass a session token explicitly with `--session-token <token>` or the `SDN_SESSION_TOKEN` environment variable.
-
-> **Not yet supported:** no CLI command creates an operator row — `accounts add` creates **peer** rows only and explicitly refuses xpubs ("it identifies a wallet account, not a libp2p host"). Proposal: Section 8.
 
 ## 4. Path B — enroll from the dashboard UI
 

@@ -85,10 +85,34 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 		LocalPeerID: localID.String(),
 	}
 
-	// Connected peers
+	// Connected peers and their observed live remote multiaddrs.
 	connectedPeers := make(map[peer.ID]bool)
+	liveAddrs := make(map[peer.ID][]string)
+	addLiveAddr := func(pid peer.ID, addr string) {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			return
+		}
+		for _, existing := range liveAddrs[pid] {
+			if existing == addr {
+				return
+			}
+		}
+		liveAddrs[pid] = append(liveAddrs[pid], addr)
+	}
 	for _, conn := range h.Network().Conns() {
-		connectedPeers[conn.RemotePeer()] = true
+		pid := conn.RemotePeer()
+		connectedPeers[pid] = true
+		if ra := conn.RemoteMultiaddr(); ra != nil {
+			addLiveAddr(pid, ra.String())
+		}
+	}
+	for pid := range connectedPeers {
+		for _, a := range h.Peerstore().Addrs(pid) {
+			if a != nil {
+				addLiveAddr(pid, a.String())
+			}
+		}
 	}
 
 	// Build the local node entry
@@ -131,6 +155,11 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 			for _, a := range tp.AddrsStrings {
 				node.MultiformatAddress = append(node.MultiformatAddress, a)
 			}
+			for _, a := range liveAddrs[tp.ID] {
+				if !containsString(node.MultiformatAddress, a) {
+					node.MultiformatAddress = append(node.MultiformatAddress, a)
+				}
+			}
 			snapshot.Nodes = append(snapshot.Nodes, node)
 
 			// If connected, add an edge
@@ -155,10 +184,11 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 			continue
 		}
 		node := PeerNode{
-			PeerID:       pid.String(),
-			Role:         RoleStandard,
-			AgentVersion: peerstoreAgentVersion(h, pid),
-			IsOnline:     true,
+			PeerID:             pid.String(),
+			Role:               RoleStandard,
+			AgentVersion:       peerstoreAgentVersion(h, pid),
+			MultiformatAddress: append([]string(nil), liveAddrs[pid]...),
+			IsOnline:           true,
 		}
 		if pin, ok := registry.PinOf(pid); ok {
 			node.Pinned = true
@@ -219,6 +249,15 @@ func peerstoreAgentVersion(h host.Host, pid peer.ID) string {
 		return ""
 	}
 	return strings.TrimSpace(version)
+}
+
+func containsString(list []string, target string) bool {
+	for _, item := range list {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 // GraphSnapshotJSON returns the snapshot as JSON bytes.

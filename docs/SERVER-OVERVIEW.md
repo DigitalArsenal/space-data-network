@@ -108,18 +108,17 @@ A wallet first signs in with its Ed25519 key; that key is then bound to the iden
 
 ## 5. Peers and operators are one kind of thing
 
-From the CLI help, verbatim: "a node running somewhere and an account that logs in are the same kind of thing: a PRR-shaped identity carrying a trust level."
-
-`accounts` is the command you use for both:
+`accounts` manages the accounts that can log in to the local node (plus the node's own root wallet). Network peers are managed separately under `/api/peers`.
 
 ```
 $ spacedatanetwork accounts --help
-List and manage accounts (network peers and login operators are one thing)
+List and manage accounts that can log in to the local node (plus the node's own root wallet).
 ```
 
-- `accounts add` adds a **peer** by `--peer-id`, `--public-key`, or `--vcard`. It refuses an xpub on purpose: an xpub identifies a wallet account, not a libp2p host.
-- `accounts list` shows the merged table: peer rows and operator rows, unified by the key that both derive (the secp256k1 account public key from an operator's xpub maps to a libp2p peer ID, which is what merges a peer row and an operator row for the same entity).
-- `accounts trust` changes trust explicitly: `--peer-id` targets the peer; `--xpub` targets the operator. It only updates an existing row; it cannot create one.
+- `accounts list` shows only the node root wallet and enrolled local login accounts (never the network peer registry).
+- `accounts add` enrolls a login account (`--xpub`, `--signing-pubkey`, `--name`, `--level`).
+- `accounts modify` updates a login account's trust level, name, or signing public key (`--xpub` or positional `<xpub|name|signing-key>`).
+- `accounts remove` removes a login account (`--xpub` or positional `<xpub|name|signing-key>`). The node root wallet cannot be modified or removed through the API.
 
 ### Trust levels
 

@@ -140,10 +140,11 @@ func makeRootHandler() http.Handler {
 		w.Header().Set("Content-Security-Policy", csp)
 		// Cross-origin isolation: the CONSOLE tab frames the SpaceAware console,
 		// whose engine needs shared WebAssembly memory, and a frame is isolated
-		// only when the page that embeds it is. Everything the dashboard loads
-		// is same-origin, and the node's module app pages already send COEP.
+		// only when the page that embeds it is. Use credentialless (not
+		// require-corp) so browser wallet extensions (e.g. Phantom) can still
+		// inject their provider scripts without CORP failures (#1246).
 		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+		w.Header().Set("Cross-Origin-Embedder-Policy", "credentialless")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -67,7 +67,7 @@ test('dashboard dev entry loads without Orbital Console and proxies the node sam
   assert.match(html, /Space Data Network — Node Dashboard/);
   assert.match(html, /src="\.\/main\.js"/);
   assert.doesNotMatch(html, /main\.ts|Orbital Console/);
-  assert.equal(response.headers.get('cross-origin-embedder-policy'), 'require-corp');
+  assert.equal(response.headers.get('cross-origin-embedder-policy'), 'credentialless');
   const entry = await server.transformRequest('/main.js');
   assert.match(entry.code, /dashboard-tailadmin/);
   assert.doesNotMatch(entry.code, /orbital-console|cesium-martini|OrbPro/);

@@ -355,7 +355,7 @@ export function dashboardDevServer(nodeOrigin = process.env.SDN_DASHBOARD_NODE_U
     strictPort: true,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp'
+      'Cross-Origin-Embedder-Policy': 'credentialless'
     },
     fs: { allow: [path.resolve(__dirname, '..'), hdWalletExternalRoot, fs.realpathSync(path.resolve(__dirname, '../spaceaware-ui/node_modules'))] },
     proxy
