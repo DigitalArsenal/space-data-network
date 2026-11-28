@@ -1,5 +1,6 @@
 // The marketing overview reads the same plan definitions as the module reference.
-// Priced plans are cards; a plan priced by contact (SpaceEdge) is its own band below them.
+// SpaceEdge pillars and SBIR/TACFI acquisition pathways lead the page; priced plans are cards
+// and SpaceEdge is also rendered as the program escalation band below them.
 (() => {
   "use strict";
   const $ = (selector) => document.querySelector(selector);
@@ -22,6 +23,28 @@
     $("[data-plans=headline]").textContent = data.headline;
     $("[data-plans=intro]").textContent = data.intro;
     $("[data-plans=data-rule]").textContent = data.dataRule;
+    if ($("[data-plans=flagship-lede]") && data.flagshipLede) {
+      $("[data-plans=flagship-lede]").textContent = data.flagshipLede;
+    }
+    if ($("[data-plans=pillars]") && Array.isArray(data.pillars)) {
+      $("[data-plans=pillars]").innerHTML = data.pillars.map((pillar) => `<article class="mp-pillar">
+        <p class="mp-pillar-tag">${esc(pillar.tag)}</p>
+        <h3>${esc(pillar.title)}</h3>
+        <p class="mp-pillar-summary">${esc(pillar.summary)}</p>
+        <ul>${(pillar.points || []).map((pt) => `<li>${esc(pt)}</li>`).join("")}</ul>
+      </article>`).join("");
+    }
+    if ($("[data-plans=acquisition-lede]") && data.acquisitionLede) {
+      $("[data-plans=acquisition-lede]").textContent = data.acquisitionLede;
+    }
+    if ($("[data-plans=acquisition]") && Array.isArray(data.acquisition)) {
+      $("[data-plans=acquisition]").innerHTML = data.acquisition.map((acq) => `<article class="mp-acq-card">
+        <p class="mp-acq-vehicle">${esc(acq.vehicle)}</p>
+        <h3>${esc(acq.title)}</h3>
+        <p class="mp-acq-summary">${esc(acq.summary)}</p>
+        <ul>${(acq.deliverables || []).map((d) => `<li>${esc(d)}</li>`).join("")}</ul>
+      </article>`).join("");
+    }
     const priced = data.plans.filter((p) => p.monthlyPrice !== null);
     const contact = data.plans.filter((p) => p.monthlyPrice === null);
     $("[data-plans=cards]").innerHTML = priced.map((p) => `<article class="mp-plan" data-plan="${esc(p.id)}">
@@ -32,8 +55,8 @@
       ${examples(p)}${note(p)}
       <a class="btn" href="${esc(p.href)}">${esc(p.cta)}</a></article>`).join("");
     $("[data-plans=edge]").innerHTML = contact.map((p) => `<article class="mp-band" data-plan="${esc(p.id)}">
-      <div><p class="mp-audience">${esc(p.audience)}</p><h3>${title(p, 34)}</h3><p class="mp-summary">${esc(p.summary)}</p>
-        <a class="btn" href="${esc(p.href)}">${esc(p.cta)}</a></div>
+      <div><p class="mp-audience">${esc(p.audience)}</p><h3>${title(p, 34)}</h3><p class="mp-price"><strong>${esc(price(p))}</strong></p><p class="mp-summary">${esc(p.summary)}</p>
+        <a class="btn btn-primary" href="${esc(p.href)}">${esc(p.cta)}</a></div>
       <ul>${p.includes.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></article>`).join("");
     const plans = new Map(data.plans.map((p) => [p.id, p]));
     $("[data-plans=capabilities]").innerHTML = data.capabilities.map((c) => `<tr>
