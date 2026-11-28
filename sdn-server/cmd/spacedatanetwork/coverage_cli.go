@@ -13,8 +13,10 @@ package main
 // of them bypass the auth wall.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -23,24 +25,21 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// accounts — the unified ACCOUNTS surface (§16)
+// accounts — local login accounts and the node root wallet
 // ---------------------------------------------------------------------------
 
 var accountsCmd = &cobra.Command{
 	Use:   "accounts",
-	Short: "List and manage accounts (network peers and login operators are one thing)",
-	Long: `List and manage accounts.
+	Short: "List, add, modify, and remove accounts that can log in to this node",
+	Long: `List and manage accounts that can log in to the local node (plus the node's own root wallet).
 
-A node running somewhere and an account that logs in are the same kind of thing:
-a PRR-shaped identity carrying a trust level (§16). 'accounts list' shows the
-merged view; trust changes go to the peer or operator record explicitly, because
-a merged row has two underlying records and guessing which one to edit would be
-wrong.`,
+Network peers are managed separately; 'accounts' covers only local login accounts
+and the node root wallet itself.`,
 }
 
 var accountsListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all accounts (peers, operators, and identities that are both)",
+	Short: "List login accounts and the node root wallet",
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := newAdminClient(cmd)
 		if err != nil {
@@ -55,67 +54,48 @@ var accountsListCmd = &cobra.Command{
 }
 
 var (
-	accountsAddPeerID    string
-	accountsAddPublicKey string
-	accountsAddVCardFile string
-	accountsAddTrust     string
-	accountsAddName      string
+	accountsAddXPub          string
+	accountsAddSigningPubKey string
+	accountsAddTrust         string
+	accountsAddName          string
 )
 
 var accountsAddCmd = &cobra.Command{
 	Use:   "add",
-	Short: "Add a peer account by peer ID, public key, or vCard",
-	Long: `Add a peer account.
+	Short: "Add a login account to this node",
+	Long: `Enroll a login account on this node (POST /api/auth/users).
 
-Identity may be given as --peer-id or --public-key (a marshaled libp2p key, a
-raw 32-byte ed25519 key, or a raw 33-byte compressed secp256k1 key, in hex or
-base64). Supplying both is allowed only if they agree — a mismatch is refused
-rather than resolved to either.
-
-An xpub is NOT accepted: it identifies a wallet account, not a libp2p host.
-Derive the peer ID from it client-side and pass --peer-id.`,
+Provide --xpub and/or --signing-pubkey (64-char hex Ed25519 public key).
+When --xpub is omitted, the account row key defaults to pubkey:<signing-pubkey>.`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if accountsAddPeerID == "" && accountsAddPublicKey == "" && accountsAddVCardFile == "" {
-			return fmt.Errorf("one of --peer-id, --public-key or --vcard is required")
+		xpub := strings.TrimSpace(accountsAddXPub)
+		sigKey := strings.TrimSpace(accountsAddSigningPubKey)
+		if xpub == "" && sigKey == "" {
+			return fmt.Errorf("at least one of --xpub or --signing-pubkey is required")
+		}
+		if xpub == "" {
+			xpub = "pubkey:" + strings.ToLower(sigKey)
+		}
+		trust := strings.TrimSpace(accountsAddTrust)
+		if trust == "" {
+			trust = "standard"
 		}
 		client, err := newAdminClient(cmd)
 		if err != nil {
 			return err
 		}
-
-		// A bare vCard goes to the dedicated import endpoint, which derives the
-		// peer's EPM from the card when it can (§8).
-		if accountsAddVCardFile != "" && accountsAddPeerID == "" && accountsAddPublicKey == "" {
-			card, rerr := os.ReadFile(accountsAddVCardFile)
-			if rerr != nil {
-				return fmt.Errorf("read %s: %w", accountsAddVCardFile, rerr)
-			}
-			var out map[string]any
-			if err := client.do(cmd.Context(), "POST", "/api/peers/import/vcard", string(card), &out); err != nil {
-				return err
-			}
-			return printJSON(cmd, out)
+		body := map[string]any{
+			"xpub":        xpub,
+			"trust_level": trust,
 		}
-
-		body := map[string]any{"trust_level": accountsAddTrust}
-		if accountsAddPeerID != "" {
-			body["peer_id"] = accountsAddPeerID
+		if name := strings.TrimSpace(accountsAddName); name != "" {
+			body["name"] = name
 		}
-		if accountsAddPublicKey != "" {
-			body["public_key"] = accountsAddPublicKey
-		}
-		if accountsAddName != "" {
-			body["name"] = accountsAddName
-		}
-		if accountsAddVCardFile != "" {
-			card, rerr := os.ReadFile(accountsAddVCardFile)
-			if rerr != nil {
-				return fmt.Errorf("read %s: %w", accountsAddVCardFile, rerr)
-			}
-			body["vcard"] = string(card)
+		if sigKey != "" {
+			body["signing_pubkey_hex"] = sigKey
 		}
 		var out map[string]any
-		if err := client.postJSON(cmd.Context(), "/api/peers", body, &out, ""); err != nil {
+		if err := client.postJSON(cmd.Context(), "/api/auth/users", body, &out, ""); err != nil {
 			return err
 		}
 		return printJSON(cmd, out)
@@ -123,47 +103,122 @@ Derive the peer ID from it client-side and pass --peer-id.`,
 }
 
 var (
-	accountsTrustPeerID string
-	accountsTrustXPub   string
-	accountsTrustLevel  string
-	accountsTrustName   string
+	accountsModifyXPub          string
+	accountsModifyLevel         string
+	accountsModifyName          string
+	accountsModifySigningPubKey string
 )
 
-var accountsTrustCmd = &cobra.Command{
-	Use:   "trust",
-	Short: "Set the trust level of a peer (--peer-id) or an operator (--xpub)",
-	Long: `Set a trust level.
-
-A merged account row has TWO underlying records — a peer entry and an operator
-entry — so the target is explicit rather than inferred:
-
-  --peer-id <id>   sets peer trust      (PUT /api/peers/<id>/trust)
-  --xpub <xpub>    sets operator trust  (PUT /api/auth/users/<xpub>)
-
-Operator levels are capped at 'admin': 'ultimate' is reserved for the node's own
-identity, and 'never' as an operator lockout is not supported.`,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		if (accountsTrustPeerID == "") == (accountsTrustXPub == "") {
-			return fmt.Errorf("exactly one of --peer-id or --xpub is required (a merged account has two records; say which)")
+func resolveAccountTarget(ctx context.Context, client *adminClient, selector string) (*accountEntry, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return nil, fmt.Errorf("account identifier (--xpub or positional name / xpub / signing key) is required")
+	}
+	var resp struct {
+		Accounts []accountEntry `json:"accounts"`
+	}
+	if err := client.get(ctx, "/api/accounts", &resp); err != nil {
+		return nil, err
+	}
+	lower := strings.ToLower(selector)
+	var matches []accountEntry
+	for _, a := range resp.Accounts {
+		if a.XPub == selector ||
+			strings.EqualFold(a.SigningPubKeyHex, lower) ||
+			strings.EqualFold(strings.TrimSpace(a.Name), selector) ||
+			(a.PeerID != "" && a.PeerID == selector) {
+			matches = append(matches, a)
 		}
-		if strings.TrimSpace(accountsTrustLevel) == "" {
-			return fmt.Errorf("--level is required (never|unknown|marginal|standard|full|admin|ultimate)")
+	}
+	if len(matches) == 0 {
+		// Allow direct xpub addressing even if not returned (e.g. server decides 404).
+		return &accountEntry{XPub: selector, Kind: accountKindOperator}, nil
+	}
+	if len(matches) > 1 {
+		return nil, fmt.Errorf("ambiguous account %q matched %d rows; pass the exact --xpub", selector, len(matches))
+	}
+	if matches[0].Kind == accountKindRoot {
+		return nil, fmt.Errorf("the node root wallet cannot be modified or removed")
+	}
+	return &matches[0], nil
+}
+
+var accountsModifyCmd = &cobra.Command{
+	Use:   "modify [xpub | name | signing-key]",
+	Short: "Modify a login account's trust level, name, or signing key",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		selector := strings.TrimSpace(accountsModifyXPub)
+		if selector == "" && len(args) == 1 {
+			selector = strings.TrimSpace(args[0])
+		}
+		if selector == "" {
+			return fmt.Errorf("specify the account via --xpub or a positional argument")
+		}
+		level := strings.TrimSpace(accountsModifyLevel)
+		name := strings.TrimSpace(accountsModifyName)
+		sigKey := strings.TrimSpace(accountsModifySigningPubKey)
+		if level == "" && name == "" && sigKey == "" {
+			return fmt.Errorf("specify at least one of --level, --name, or --signing-pubkey to modify")
 		}
 		client, err := newAdminClient(cmd)
 		if err != nil {
 			return err
 		}
+		target, err := resolveAccountTarget(cmd.Context(), client, selector)
+		if err != nil {
+			return err
+		}
+		if level == "" {
+			if target.TrustLevel.String() != "" {
+				level = target.TrustLevel.String()
+			} else {
+				return fmt.Errorf("--level is required when the existing trust level cannot be resolved")
+			}
+		}
+		body := map[string]any{
+			"xpub":        target.XPub,
+			"trust_level": level,
+		}
+		if name != "" {
+			body["name"] = name
+		}
+		if sigKey != "" {
+			body["signing_pubkey_hex"] = sigKey
+		}
 		var out map[string]any
-		if accountsTrustPeerID != "" {
-			body := map[string]any{"trust_level": accountsTrustLevel}
-			if err := client.do(cmd.Context(), "PUT", "/api/peers/"+accountsTrustPeerID+"/trust", body, &out); err != nil {
-				return err
-			}
-		} else {
-			body := map[string]any{"xpub": accountsTrustXPub, "trust_level": accountsTrustLevel, "name": accountsTrustName}
-			if err := client.do(cmd.Context(), "PUT", "/api/auth/users/"+accountsTrustXPub, body, &out); err != nil {
-				return err
-			}
+		if err := client.do(cmd.Context(), "PUT", "/api/auth/users/"+url.PathEscape(target.XPub), body, &out); err != nil {
+			return err
+		}
+		return printJSON(cmd, out)
+	},
+}
+
+var accountsRemoveXPub string
+
+var accountsRemoveCmd = &cobra.Command{
+	Use:   "remove [xpub | name | signing-key]",
+	Short: "Remove a login account from this node",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		selector := strings.TrimSpace(accountsRemoveXPub)
+		if selector == "" && len(args) == 1 {
+			selector = strings.TrimSpace(args[0])
+		}
+		if selector == "" {
+			return fmt.Errorf("specify the account via --xpub or a positional argument")
+		}
+		client, err := newAdminClient(cmd)
+		if err != nil {
+			return err
+		}
+		target, err := resolveAccountTarget(cmd.Context(), client, selector)
+		if err != nil {
+			return err
+		}
+		var out map[string]any
+		if err := client.do(cmd.Context(), "DELETE", "/api/auth/users/"+url.PathEscape(target.XPub), nil, &out); err != nil {
+			return err
 		}
 		return printJSON(cmd, out)
 	},
@@ -428,16 +483,17 @@ type jsonRaw []byte
 func (r jsonRaw) MarshalJSON() ([]byte, error) { return r, nil }
 
 func init() {
-	accountsAddCmd.Flags().StringVar(&accountsAddPeerID, "peer-id", "", "libp2p peer ID")
-	accountsAddCmd.Flags().StringVar(&accountsAddPublicKey, "public-key", "", "public key (hex or base64)")
-	accountsAddCmd.Flags().StringVar(&accountsAddVCardFile, "vcard", "", "path to a vCard file")
-	accountsAddCmd.Flags().StringVar(&accountsAddTrust, "level", "standard", "trust level")
+	accountsAddCmd.Flags().StringVar(&accountsAddXPub, "xpub", "", "account xpub (optional if --signing-pubkey is provided)")
+	accountsAddCmd.Flags().StringVar(&accountsAddSigningPubKey, "signing-pubkey", "", "Ed25519 signing public key (64-char hex)")
+	accountsAddCmd.Flags().StringVar(&accountsAddTrust, "level", "standard", "trust level (unknown|marginal|standard|full|admin)")
 	accountsAddCmd.Flags().StringVar(&accountsAddName, "name", "", "display name")
 
-	accountsTrustCmd.Flags().StringVar(&accountsTrustPeerID, "peer-id", "", "set PEER trust for this peer ID")
-	accountsTrustCmd.Flags().StringVar(&accountsTrustXPub, "xpub", "", "set OPERATOR trust for this xpub")
-	accountsTrustCmd.Flags().StringVar(&accountsTrustLevel, "level", "", "trust level")
-	accountsTrustCmd.Flags().StringVar(&accountsTrustName, "name", "", "operator display name (with --xpub)")
+	accountsModifyCmd.Flags().StringVar(&accountsModifyXPub, "xpub", "", "account xpub, name, or signing public key")
+	accountsModifyCmd.Flags().StringVar(&accountsModifyLevel, "level", "", "new trust level (unknown|marginal|standard|full|admin)")
+	accountsModifyCmd.Flags().StringVar(&accountsModifyName, "name", "", "new display name")
+	accountsModifyCmd.Flags().StringVar(&accountsModifySigningPubKey, "signing-pubkey", "", "new Ed25519 signing public key (64-char hex)")
+
+	accountsRemoveCmd.Flags().StringVar(&accountsRemoveXPub, "xpub", "", "account xpub, name, or signing public key")
 
 	identitySetCmd.Flags().StringVar(&identitySetFile, "file", "", "JSON epm.Profile to write (WHOLE-PROFILE REPLACE)")
 	identityGenKeyCmd.Flags().StringVar(&identityGenKeySlot, "slot", "", "key slot: signing|encryption")
@@ -451,14 +507,14 @@ func init() {
 	tablesQueryCmd.Flags().StringVar(&tablesQuerySchema, "schema", "", "SDS schema (e.g. OMM.fbs)")
 	tablesQueryCmd.Flags().IntVar(&tablesQueryLimit, "limit", 0, "max rows")
 
-	accountsCmd.AddCommand(accountsListCmd, accountsAddCmd, accountsTrustCmd)
+	accountsCmd.AddCommand(accountsListCmd, accountsAddCmd, accountsModifyCmd, accountsRemoveCmd)
 	identityCmd.AddCommand(identitySetCmd, identityKeysCmd, identityGenKeyCmd)
 	pubsubCmd.AddCommand(pubsubTopicsCmd, pubsubMessagesCmd, pubsubPublishCmd)
 	tablesCmd.AddCommand(tablesListCmd, tablesQueryCmd)
 
 	// Every Admin-gated command gets the remote/non-root override, uniformly.
 	for _, c := range []*cobra.Command{
-		accountsListCmd, accountsAddCmd, accountsTrustCmd,
+		accountsListCmd, accountsAddCmd, accountsModifyCmd, accountsRemoveCmd,
 		identitySetCmd, identityKeysCmd, identityGenKeyCmd,
 		pubsubTopicsCmd, pubsubMessagesCmd, pubsubPublishCmd,
 		tablesListCmd, tablesQueryCmd,

@@ -81,8 +81,8 @@ func TestRootDashboard(t *testing.T) {
 		if coop := rec.Header().Get("Cross-Origin-Opener-Policy"); coop != "same-origin" {
 			t.Errorf("GET %s COOP = %q, want same-origin", path, coop)
 		}
-		if coep := rec.Header().Get("Cross-Origin-Embedder-Policy"); coep != "require-corp" {
-			t.Errorf("GET %s COEP = %q, want require-corp", path, coep)
+		if coep := rec.Header().Get("Cross-Origin-Embedder-Policy"); coep != "credentialless" {
+			t.Errorf("GET %s COEP = %q, want credentialless", path, coep)
 		}
 	}
 

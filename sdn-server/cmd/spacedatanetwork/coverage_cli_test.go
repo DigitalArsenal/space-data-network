@@ -52,7 +52,7 @@ func TestSessionTokenOverridePrecedence(t *testing.T) {
 // Admin-gated commands had no flag at all.
 func TestEveryAdminGatedCommandHasTheOverride(t *testing.T) {
 	for _, c := range []*cobra.Command{
-		accountsListCmd, accountsAddCmd, accountsTrustCmd,
+		accountsListCmd, accountsAddCmd, accountsModifyCmd, accountsRemoveCmd,
 		identitySetCmd, identityKeysCmd, identityGenKeyCmd,
 		pubsubTopicsCmd, pubsubMessagesCmd, pubsubPublishCmd,
 		tablesListCmd, tablesQueryCmd,
@@ -63,39 +63,51 @@ func TestEveryAdminGatedCommandHasTheOverride(t *testing.T) {
 	}
 }
 
-// TestAccountsTrustRequiresAnExplicitTarget locks §16's rule that a merged
-// account row has TWO underlying records. Guessing which one to edit would
-// silently change the wrong authority.
-func TestAccountsTrustRequiresAnExplicitTarget(t *testing.T) {
-	reset := func() { accountsTrustPeerID, accountsTrustXPub, accountsTrustLevel = "", "", "full" }
-
-	reset()
-	if err := accountsTrustCmd.RunE(accountsTrustCmd, nil); err == nil {
-		t.Fatal("neither target supplied was accepted")
-	} else if !strings.Contains(err.Error(), "exactly one") {
-		t.Fatalf("error should demand exactly one target: %v", err)
+func TestAccountsModifyAndRemoveValidation(t *testing.T) {
+	accountsModifyXPub, accountsModifyLevel, accountsModifyName, accountsModifySigningPubKey = "", "", "", ""
+	if err := accountsModifyCmd.RunE(accountsModifyCmd, nil); err == nil {
+		t.Fatal("accounts modify with no selector was accepted")
 	}
-
-	reset()
-	accountsTrustPeerID, accountsTrustXPub = "12D3KooW", "xpub-x"
-	if err := accountsTrustCmd.RunE(accountsTrustCmd, nil); err == nil {
-		t.Fatal("both targets supplied were accepted; the command must not guess")
+	accountsModifyXPub = "xpub-1"
+	if err := accountsModifyCmd.RunE(accountsModifyCmd, nil); err == nil {
+		t.Fatal("accounts modify with no fields was accepted")
 	}
+	accountsModifyXPub = ""
 
-	reset()
-	accountsTrustPeerID, accountsTrustLevel = "12D3KooW", ""
-	if err := accountsTrustCmd.RunE(accountsTrustCmd, nil); err == nil {
-		t.Fatal("missing --level was accepted")
-	} else if !strings.Contains(err.Error(), "--level") {
-		t.Fatalf("error should name --level: %v", err)
+	accountsRemoveXPub = ""
+	if err := accountsRemoveCmd.RunE(accountsRemoveCmd, nil); err == nil {
+		t.Fatal("accounts remove with no selector was accepted")
 	}
-	reset()
+}
+
+func TestAccountsResolveTargetRefusesRootWallet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"accounts": []map[string]any{
+				{"kind": "root", "xpub": "xpub-root", "name": "Node Root", "trust_level": "ultimate", "can_sign_in": true},
+				{"kind": "operator", "xpub": "xpub-op", "name": "Alice", "trust_level": "admin", "signing_pubkey_hex": "aa", "can_sign_in": true},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := &adminClient{baseURL: srv.URL, http: srv.Client(), token: "tok"}
+	if _, err := resolveAccountTarget(context.Background(), client, "Node Root"); err == nil {
+		t.Fatal("expected root wallet to be rejected")
+	}
+	got, err := resolveAccountTarget(context.Background(), client, "Alice")
+	if err != nil {
+		t.Fatalf("resolveAccountTarget(Alice): %v", err)
+	}
+	if got.XPub != "xpub-op" {
+		t.Fatalf("got xpub = %q, want xpub-op", got.XPub)
+	}
 }
 
 // TestCommandsRequireTheirIdentifiers locks the cheap argument guards, which all
 // run BEFORE any network call so a typo never reaches the daemon.
 func TestCommandsRequireTheirIdentifiers(t *testing.T) {
-	accountsAddPeerID, accountsAddPublicKey, accountsAddVCardFile = "", "", ""
+	accountsAddXPub, accountsAddSigningPubKey = "", ""
 	if err := accountsAddCmd.RunE(accountsAddCmd, nil); err == nil {
 		t.Fatal("accounts add with no identity was accepted")
 	}
