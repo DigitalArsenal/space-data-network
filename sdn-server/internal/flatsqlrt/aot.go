@@ -134,11 +134,11 @@ func ensureAOTArtifact(cacheDir, prefix string, wasm []byte, prune bool) ([]byte
 	}
 
 	// The compile configuration matches the runtime's (wasmrt enables the
-	// THREADS proposal for every VM): code compiled for one proposal set and
-	// validated under another is exactly the mismatch design §5.4 names.
-	conf := wasmedge.NewConfigure(wasmedge.THREADS)
-	if conf == nil {
-		return nil, fmt.Errorf("flatsqlrt: cannot create an AOT compile configuration")
+	// THREADS proposal for every VM) and enables Interruptible so AsyncCancel /
+	// ExecutionTimeout can stop pure-CPU compute loops inside AOT code.
+	conf, err := wasmrt.NewThreadedCompilerConfig()
+	if err != nil {
+		return nil, fmt.Errorf("flatsqlrt: cannot create an AOT compile configuration: %w", err)
 	}
 	defer conf.Release()
 	compiler := wasmedge.NewCompilerWithConfig(conf)
@@ -213,16 +213,20 @@ func AOTArtifactPath(cacheDir, prefix string, wasm []byte) string {
 }
 
 // The key carries everything an artifact's validity depends on: the engine
-// bytes, the libwasmedge runtime that compiled it, and THE CPU it was compiled
-// for. The last was missing, and its absence is not a slow path — an AVX-512
-// artifact loaded on a CPU without AVX-512 is an illegal instruction and a dead
-// process. See aot_cpu.go for the crash that proved it.
+// bytes, the libwasmedge runtime that compiled it, THE CPU it was compiled
+// for, and "-intr" because ensureAOTArtifact compiles Interruptible so any
+// pre-existing non-interruptible cached artifacts are cleanly invalidated.
+// See aot_cpu.go for the SIGILL crash that proved the CPU suffix is needed.
 func aotArtifactPath(cacheDir, prefix string, wasm []byte) string {
+	return aotArtifactPathWithSuffix(cacheDir, prefix, wasm, "-intr")
+}
+
+func aotArtifactPathWithSuffix(cacheDir, prefix string, wasm []byte, suffix string) string {
 	sum := sha256.Sum256(wasm)
 	ver := sanitizeAOTKeyPart(RuntimeVersion())
 	cpuProfile := sanitizeAOTKeyPart(aotCPUProfile())
-	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s-%s.aot.wasm",
-		prefix, hex.EncodeToString(sum[:8]), ver, cpuProfile))
+	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s-%s%s.aot.wasm",
+		prefix, hex.EncodeToString(sum[:8]), ver, cpuProfile, suffix))
 }
 
 // Threaded, Interruptible artifacts (design §5.4, A21, A30).
@@ -231,14 +235,14 @@ func aotArtifactPath(cacheDir, prefix string, wasm []byte) string {
 // Interruptible, so an executor stop reaches its service threads even inside
 // a compute loop. Its cache key differs from the legacy engine's in two
 // parts, so neither can ever load the other's artifact:
-//   - "-intr": compiled Interruptible;
+//   - "-intr": compiled Interruptible (carried in threadedAOTKey);
 //   - the runtime's stop-token behavior (wasmrt.SubstrateReport.Tag): a
 //     patched runtime reads the stop token that an upstream one consumes, and
 //     the compiled check is part of the artifact.
 
 // ThreadedAOTPath reports where the threaded artifact for wasm lives.
 func ThreadedAOTPath(cacheDir, prefix string, wasm []byte) string {
-	return aotArtifactPath(cacheDir, threadedAOTKey(prefix), wasm)
+	return aotArtifactPathWithSuffix(cacheDir, threadedAOTKey(prefix), wasm, "")
 }
 
 func threadedAOTKey(prefix string) string {
@@ -253,7 +257,7 @@ func EnsureThreadedAOTArtifact(cacheDir, prefix string, wasm []byte, compileOnMi
 		return nil, "", fmt.Errorf("flatsqlrt: a threaded instance needs an AOT cache directory")
 	}
 	key := threadedAOTKey(prefix)
-	path := aotArtifactPath(cacheDir, key, wasm)
+	path := aotArtifactPathWithSuffix(cacheDir, key, wasm, "")
 	if cached, err := os.ReadFile(path); err == nil && len(cached) > 0 {
 		return cached, path, nil
 	}
